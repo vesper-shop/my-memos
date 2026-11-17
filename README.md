@@ -2,8 +2,8 @@
 
 A personal memo app built with SvelteKit, deployed as a Cloudflare Worker.
 
-- **Storage** — memos live in [Vesper](https://noted-this.date) and are read with a workspace API token (`VESPER_TOKEN`); R2 keeps the Agent's memory and KV the grant, sessions and caches
-- **Auth** — reads use the token; writes need a Vesper sign-in, and the profile card shows the signed-in workspace handle
+- **Storage** — memos live in [Vesper](https://noted-this.date) and are read with a workspace API token (`VESPER_TOKEN`); R2 keeps the Agent's memory and KV the sessions and caches
+- **Auth** — the token reads and writes; editing needs a Vesper sign-in, and the profile card shows the signed-in workspace handle
 - **AI chat** — Cloudflare AI Gateway with memo-aware tools (list, search, create, update, delete)
 - **Stack** — SvelteKit · pnpm workspace · adapter-cloudflare
 

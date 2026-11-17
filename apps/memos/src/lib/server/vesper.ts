@@ -7,12 +7,10 @@ export const SESSION_COOKIE = "memos_session";
 export const SESSION_SECONDS = 30 * 24 * 60 * 60;
 
 const RESOURCE = `${VESPER_ORIGIN}/mcp`;
-const SCOPE = "entries:read entries:write offline_access";
+const SCOPE = "entries:read";
 const CLIENT_KEY = "vesper:client";
-const GRANT_KEY = "vesper:grant";
 const PROFILE_KEY = "vesper:profile";
 const OWNER_KEY = "vesper:owner-workspace";
-const EARLY_MS = 60_000;
 const HEADERS = { "user-agent": "my-memos" };
 
 const metadataSchema = z.object({
@@ -21,16 +19,7 @@ const metadataSchema = z.object({
   registration_endpoint: z.string(),
 });
 const clientSchema = z.object({ client_id: z.string(), redirect_uri: z.string() });
-const tokenSchema = z.object({
-  access_token: z.string(),
-  refresh_token: z.string().optional(),
-  expires_in: z.number(),
-});
-const grantSchema = z.object({
-  accessToken: z.string(),
-  refreshToken: z.string(),
-  expiresAt: z.number(),
-});
+const tokenSchema = z.object({ access_token: z.string() });
 const pendingSchema = z.object({ verifier: z.string(), next: z.string() });
 const workspaceSchema = z.object({
   workspace: z.object({ id: z.string(), handle: z.string() }),
@@ -86,7 +75,7 @@ async function client(env: AppEnv, redirectUri: string) {
       body: JSON.stringify({
         client_name: "My Memos",
         redirect_uris: [redirectUri],
-        grant_types: ["authorization_code", "refresh_token"],
+        grant_types: ["authorization_code"],
         response_types: ["code"],
         token_endpoint_auth_method: "none",
         scope: SCOPE,
@@ -146,11 +135,9 @@ export async function callback(env: AppEnv, redirectUri: string, code: string, s
       }),
     ),
   );
-  if (!tokens.refresh_token) throw new VesperError("Vesper did not grant offline access.");
   const me = await workspace(tokens.access_token);
   if (!me || me.workspace.id !== (await ownerId(env)))
     throw new VesperError("This Vesper workspace is not the one this site belongs to.");
-  await saveGrant(env, tokens, tokens.refresh_token);
   await env.MEMOS_CACHE.put(
     PROFILE_KEY,
     JSON.stringify(profileOf(me.workspace.handle, me.profile.name, me.profile.image)),
@@ -203,42 +190,6 @@ export async function isOwner(env: AppEnv, token: string) {
   return owner;
 }
 
-async function saveGrant(env: AppEnv, tokens: z.output<typeof tokenSchema>, previous: string) {
-  const grant = {
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token || previous,
-    expiresAt: Date.now() + tokens.expires_in * 1000,
-  };
-  await env.MEMOS_CACHE.put(GRANT_KEY, JSON.stringify(grant));
-  return grant;
-}
-
-async function accessToken(env: AppEnv) {
-  const grant = grantSchema.safeParse(await env.MEMOS_CACHE.get(GRANT_KEY, "json"));
-  if (!grant.success) throw new VesperError("Vesper is not connected. Sign in once to connect it.");
-  if (grant.data.expiresAt - EARLY_MS > Date.now()) return grant.data.accessToken;
-  const saved = clientSchema.parse(await env.MEMOS_CACHE.get(CLIENT_KEY, "json"));
-  const { token_endpoint } = await metadata();
-  const response = await fetch(
-    token_endpoint,
-    form({
-      grant_type: "refresh_token",
-      refresh_token: grant.data.refreshToken,
-      client_id: saved.client_id,
-      resource: RESOURCE,
-    }),
-  );
-  if (!response.ok) {
-    // Another request may have rotated the refresh token first; use the grant it saved.
-    const latest = grantSchema.safeParse(await env.MEMOS_CACHE.get(GRANT_KEY, "json"));
-    if (latest.success && latest.data.refreshToken !== grant.data.refreshToken)
-      return latest.data.accessToken;
-    throw new VesperError(`Vesper refused to renew the grant (${response.status}). Sign in again.`);
-  }
-  const tokens = tokenSchema.parse(await response.json());
-  return (await saveGrant(env, tokens, grant.data.refreshToken)).accessToken;
-}
-
 export async function vesperFetch(env: AppEnv, path: string, init: RequestInit = {}) {
   const response = await fetch(`${VESPER_ORIGIN}${path}`, {
     ...init,
@@ -246,20 +197,6 @@ export async function vesperFetch(env: AppEnv, path: string, init: RequestInit =
       ...HEADERS,
       ...(init.body ? { "content-type": "application/json" } : {}),
       authorization: `Bearer ${env.VESPER_TOKEN}`,
-    },
-  });
-  if (!response.ok)
-    throw new VesperError(`${path}: ${response.status} ${(await response.text()).slice(0, 200)}`);
-  return response;
-}
-
-export async function vesperWrite(env: AppEnv, path: string, init: RequestInit = {}) {
-  const response = await fetch(`${VESPER_ORIGIN}${path}`, {
-    ...init,
-    headers: {
-      ...HEADERS,
-      ...(init.body ? { "content-type": "application/json" } : {}),
-      authorization: `Bearer ${await accessToken(env)}`,
     },
   });
   if (!response.ok)

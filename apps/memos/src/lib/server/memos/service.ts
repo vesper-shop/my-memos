@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { classifyMemo, listTagDefinitions } from "#lib/server/tags/index.ts";
 import type { AppEnv } from "#lib/server/types.ts";
-import { vesperWrite } from "#lib/server/vesper.ts";
+import { vesperFetch } from "#lib/server/vesper.ts";
 import type { Memo, TagCount } from "#lib/types.ts";
 import { invalidateMemoOgCache } from "./cache";
 import { filterAgentMemos, findMemo, forgetMemos, loadMemos, queryTagCounts } from "./repository";
@@ -41,7 +41,7 @@ export async function createMemo(env: AppEnv, input: CreateMemoInput): Promise<M
   const tags = writtenTags.length
     ? writtenTags
     : await classifyMemo(input.content, await listTagDefinitions(env));
-  const response = await vesperWrite(env, "/api/entries", {
+  const response = await vesperFetch(env, "/api/entries", {
     method: "POST",
     body: JSON.stringify({
       body: bodyOf(input.content),
@@ -66,7 +66,7 @@ export async function updateMemo(env: AppEnv, id: string, input: UpdateMemoInput
     input.content !== null && (input.tags === null || input.tags.length === 0)
       ? normalizeTags(input.content)
       : input.tags;
-  await vesperWrite(env, `/api/entries/${id}`, {
+  await vesperFetch(env, `/api/entries/${id}`, {
     method: "PATCH",
     body: JSON.stringify({
       body: input.content === null ? null : bodyOf(input.content),
@@ -86,6 +86,6 @@ export async function updateMemo(env: AppEnv, id: string, input: UpdateMemoInput
 export async function deleteMemo(env: AppEnv, id: string): Promise<void> {
   if (!(await findMemo(env, id))) throw new MemoError("not_found", `Memo not found: ${id}`);
   await invalidateMemoOgCache(env.MEMOS_CACHE, id);
-  await vesperWrite(env, `/api/entries/${id}`, { method: "DELETE" });
+  await vesperFetch(env, `/api/entries/${id}`, { method: "DELETE" });
   await forgetMemos(env);
 }

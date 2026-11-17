@@ -6,7 +6,7 @@ const RESOURCE = "https://memos.you-find.me";
 export const PROTECTED_RESOURCE_METADATA = {
   resource: RESOURCE,
   authorization_servers: [`${VESPER_ORIGIN}/api/auth`],
-  scopes_supported: ["entries:read", "entries:write"],
+  scopes_supported: ["entries:read", "entries:create", "entries:update", "entries:delete"],
   bearer_methods_supported: ["header"],
   resource_name: "my memos",
 };

@@ -21,12 +21,12 @@ The runnable app is the SvelteKit project in [apps/memos](../apps/memos), built 
 
 The current Worker expects these bindings to exist:
 
-| Binding        | Type       | Purpose                                       |
-| -------------- | ---------- | --------------------------------------------- |
-| `MEMOS_CACHE`  | KV         | Vesper grant, sessions, profile, tags, caches |
-| `MEMOS_BUCKET` | R2         | Agent files                                   |
-| `ASSETS`       | Assets     | Built SvelteKit client assets                 |
-| `AI`           | Workers AI | Jev memo classification                       |
+| Binding        | Type       | Purpose                         |
+| -------------- | ---------- | ------------------------------- |
+| `MEMOS_CACHE`  | KV         | Sessions, profile, tags, caches |
+| `MEMOS_BUCKET` | R2         | Agent files                     |
+| `ASSETS`       | Assets     | Built SvelteKit client assets   |
+| `AI`           | Workers AI | Jev memo classification         |
 
 Current binding names and IDs live in the `cloudflare` field of [apps/memos/void.config.ts](../apps/memos/void.config.ts). Runtime TypeScript declarations live in [apps/memos/src/lib/server/types.ts](../apps/memos/src/lib/server/types.ts) (`AppEnv`), which [apps/memos/src/app.d.ts](../apps/memos/src/app.d.ts) merges into `Cloudflare.Env`. Server code reads bindings with `import { env } from "cloudflare:workers"`; SvelteKit 3 and `@sveltejs/adapter-cloudflare` 8 no longer provide `platform`. The adapter reads `./.void-wrangler.jsonc`.
 
@@ -46,10 +46,9 @@ Local development reads the variables above from `apps/memos/.env`, the only loc
 
 ## External Access
 
-Set `VESPER_TOKEN` to a workspace API token created in Vesper; pages read entries with it. Writing
-needs a one-time sign-in at `/auth/sign-in` after a deploy to a new KV namespace: the grant it stores
-is what create, edit and delete call Vesper with, and the workspace handle it records fills the
-header card. The external REST API and MCP endpoint accept Vesper access tokens for the same
+Set `VESPER_TOKEN` to a workspace API token created in Vesper with the scopes `entries:read`,
+`entries:create`, `entries:update` and `entries:delete`; reads and writes both use it. The owner signs
+in at `/auth/sign-in` to edit, and the workspace handle the sign-in records fills the header card. The external REST API and MCP endpoint accept Vesper access tokens for the same
 workspace.
 
 ## Build And Deployment Flow
@@ -158,5 +157,5 @@ Some clients name the transport `http` instead of `streamable-http`; the URL is 
 - The chat route reads `agent/PROMPT.md` and `agent/MEMORY.md` from `MEMOS_BUCKET`. Missing files degrade gracefully, but chat behavior will change.
 - Chat runs as a streaming HTTP invocation, not a Queue consumer. This deployment intentionally leaves `limits.cpu_ms` unset because it targets Workers Free, whose CPU ceiling is 10 ms per invocation; the 30-second default and configurable 5-minute maximum belong to Workers Paid. Model, Vesper, R2 and MCP I/O wait time does not consume CPU time, and the response stream keeps the HTTP invocation alive while the client remains connected.
 - Memory changes only when the agent calls `update_memory`. An R2 ETag conflict fails that tool call, not the chat response.
-- Local development uses the remote KV and R2 bindings and the same Vesper token and grant, so it reads and writes production memos.
+- Local development uses the remote KV and R2 bindings and the same Vesper token, so it reads and writes production memos.
 - `apps/memos/void.config.ts` currently includes concrete IDs and a production URL. Keep its `cloudflare` bindings aligned with `apps/memos/src/app.d.ts`, and avoid mixing environments in one config unless you add explicit environment sections.

@@ -25,7 +25,7 @@ Browser (in-memory Svelte Chat store)
   -> Vesper API (memos are Vesper entries without photos)
   -> Cloudflare bindings
      - R2: agent memory files
-     - KV: Vesper grant, owner sessions, profile, tag definitions and derived caches
+     - KV: owner sessions, profile, tag definitions and derived caches
 ```
 
 ## Workspace Structure
@@ -43,7 +43,7 @@ Key areas:
 - [apps/memos/src/lib/server](../apps/memos/src/lib/server)
   Server-only auth, filters, domain services, and the Vesper client.
   - `apps/memos/src/lib/server/vesper.ts`
-    Vesper reads with the `VESPER_TOKEN` secret, writes with the OAuth grant, and sign-in.
+    Vesper reads and writes with the `VESPER_TOKEN` secret, and owner sign-in.
   - `apps/memos/src/lib/server/memos`
     Memo domain: the repository reads Vesper entries into memos and filters them in memory; the
     service writes through the Vesper API; `legacy-ids.json` maps pre-Vesper memo ids to entry ids.
@@ -143,11 +143,11 @@ Route loader: [apps/memos/src/routes/chat/+page.server.ts](../apps/memos/src/rou
 
 ## Authentication
 
-Reads use `VESPER_TOKEN`, a workspace API token stored as a Worker secret, so every page lists memos
-without a session. Writes need the owner: `/auth/sign-in` registers the site as a Vesper OAuth client
-and starts an authorization-code flow with PKCE for `entries:read entries:write offline_access`.
-`/auth/callback` exchanges the code, calls Vesper's `/api/workspace`, accepts the grant only when the
-workspace UUID matches `VESPER_WORKSPACE`, stores the grant in KV and sets an `HttpOnly` session
+Vesper is called with `VESPER_TOKEN`, a workspace API token stored as a Worker secret, so every page
+lists memos without a session. Writes need the owner: `/auth/sign-in` registers the site as a Vesper
+OAuth client and starts an authorization-code flow with PKCE for `entries:read`. `/auth/callback`
+exchanges the code, calls Vesper's `/api/workspace`, accepts the sign-in only when the workspace UUID
+matches the token's workspace and sets an `HttpOnly` session
 cookie whose id lives in KV for 30 days. The callback also stores the workspace handle, which the
 header card shows and links to `https://<handle>.noted-this.date/`. `/auth/sign-out` deletes the
 session. `locals.user` is the dynamic profile or `null`.
@@ -161,7 +161,7 @@ tag counts and Agent searches filter that list in memory. Creating, editing and 
 Vesper's entries API and drop the cached list. Old `/memo/{id}` links with pre-Vesper ids redirect
 to the entry id.
 
-R2 keeps only `agent/PROMPT.md` and `agent/MEMORY.md`. KV keeps the Vesper client, grant and
+R2 keeps only `agent/PROMPT.md` and `agent/MEMORY.md`. KV keeps the Vesper client and
 profile, owner sessions, tag definitions, the memo list cache and generated Open Graph images.
 
 ## Server Domain Logic
