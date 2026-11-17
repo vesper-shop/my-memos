@@ -13,7 +13,6 @@ const origin = new URL("https://memos.example.com");
 function memo(overrides: Partial<Memo> = {}): Memo {
   return {
     id: "20260801T120000Z-abcdef12",
-    r2Key: "memos/20260801T120000Z-abcdef12.md",
     content: "# Hello & <world>\n\nA memo body. #design",
     tags: ["design"],
     createdAt: "2026-08-01T12:00:00.000Z",

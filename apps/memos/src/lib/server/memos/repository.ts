@@ -1,29 +1,83 @@
-import { and, desc, eq, gte, like, or, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/d1";
-import { memos, type MemoRow } from "#lib/server/db/schema.ts";
-import { buildMemoDateCondition, buildMemoTagConditions } from "./query";
-import type { AgentMemoFilters, MemoContentRecord, MemoListFilters, MemoPage } from "./types";
-import type { Memo, MemoStats, TagCount } from "#lib/types.ts";
+import { z } from "zod";
+import type { AppEnv } from "#lib/server/types.ts";
+import { vesperFetch } from "#lib/server/vesper.ts";
+import { replaceTrailingHashtags } from "#lib/utils/tags.ts";
+import type {
+  AgentMemoFilters,
+  Memo,
+  MemoListFilters,
+  MemoPage,
+  MemoStats,
+  TagCount,
+} from "./types";
 
-const DEFAULT_LIMIT = 25;
+const CACHE_KEY = "vesper:memos";
+const CACHE_TTL = 60;
 const CURSOR_VALUE_SEPARATOR = "|";
-const MEMO_ID_RE = /^\d{8}T\d{6}Z-[0-9a-f]{8}$/;
+const ID_RE = /^[0-9a-f-]{36}$/;
 const SORT_VALUE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const DAY_MS = 86_400_000;
 
-export function memoFromRow(row: MemoRow): Memo {
-  return {
-    id: row.id,
-    r2Key: row.r2Key,
-    content: row.excerpt,
-    tags: row.tagsJson,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    visibility: row.visibility,
-    pinned: row.pinned,
-    favorite: row.favorite,
-    archived: row.archived,
-  };
+const documentPageSchema = z.object({
+  documents: z.array(
+    z.object({
+      meta: z.object({
+        id: z.string(),
+        occurred: z.string(),
+        visibility: z.enum(["private", "public"]),
+        pinned: z.string().nullable(),
+        favorite: z.string().nullable(),
+        archived: z.string().nullable(),
+        tags: z.array(z.string()),
+        photos: z.array(z.string()),
+      }),
+      body: z.string(),
+    }),
+  ),
+  next: z.string().nullable(),
+});
+
+async function fetchShelf(env: AppEnv, shelf: "all" | "archive") {
+  const memos: Memo[] = [];
+  let before: string | null = null;
+  do {
+    const query = new URLSearchParams({ in: shelf, ...(before ? { before } : {}) });
+    const page = documentPageSchema.parse(
+      await (await vesperFetch(env, `/api/entries/documents?${query}`)).json(),
+    );
+    for (const { meta, body } of page.documents) {
+      if (meta.photos.length > 0) continue;
+      const at = new Date(meta.occurred).toISOString();
+      memos.push({
+        id: meta.id,
+        content: replaceTrailingHashtags(body, meta.tags),
+        tags: meta.tags,
+        createdAt: at,
+        updatedAt: at,
+        visibility: meta.visibility,
+        pinned: meta.pinned !== null,
+        favorite: meta.favorite !== null,
+        archived: meta.archived !== null,
+      });
+    }
+    before = page.next;
+  } while (before);
+  return memos;
 }
+
+export async function loadMemos(env: AppEnv): Promise<Memo[]> {
+  const cached = await env.MEMOS_CACHE.get<Memo[]>(CACHE_KEY, "json");
+  if (cached) return cached;
+  const [active, archived] = await Promise.all([
+    fetchShelf(env, "all"),
+    fetchShelf(env, "archive"),
+  ]);
+  const memos = [...new Map([...active, ...archived].map((memo) => [memo.id, memo])).values()];
+  await env.MEMOS_CACHE.put(CACHE_KEY, JSON.stringify(memos), { expirationTtl: CACHE_TTL });
+  return memos;
+}
+
+export const forgetMemos = (env: AppEnv) => env.MEMOS_CACHE.delete(CACHE_KEY);
 
 function encodeCursor(pinned: boolean, sortValue: string, id: string): string {
   return btoa([pinned ? "1" : "0", sortValue, id].join(CURSOR_VALUE_SEPARATOR));
@@ -31,12 +85,11 @@ function encodeCursor(pinned: boolean, sortValue: string, id: string): string {
 
 function decodeCursor(raw: string): { p: boolean; v: string; i: string } | null {
   if (!/^[A-Za-z0-9+/]{1,}={0,2}$/.test(raw) || raw.length % 4 !== 0) return null;
-
-  const [pinned, sortValue, id, extra] = atob(raw).split(CURSOR_VALUE_SEPARATOR);
-  if (extra !== undefined) return null;
+  const parts = atob(raw).split(CURSOR_VALUE_SEPARATOR);
+  if (parts.length !== 3) return null;
+  const [pinned, sortValue, id] = parts;
   if (pinned !== "0" && pinned !== "1") return null;
-  if (!SORT_VALUE_RE.test(sortValue) || !MEMO_ID_RE.test(id)) return null;
-
+  if (!SORT_VALUE_RE.test(sortValue) || !ID_RE.test(id)) return null;
   return { p: pinned === "1", v: sortValue, i: id };
 }
 
@@ -44,159 +97,103 @@ export function isValidMemoCursor(raw: string): boolean {
   return decodeCursor(raw) !== null;
 }
 
-export async function findMemoRow(d1: D1Database, id: string): Promise<MemoRow | null> {
-  const db = drizzle(d1);
-  const [row] = await db.select().from(memos).where(eq(memos.id, id)).limit(1);
-  return row ?? null;
+const sameDay = (iso: string, day: string) => iso.slice(0, 10) === day;
+const hasTag = (memo: Memo, tag: string) =>
+  memo.tags.some((name) => name.toLowerCase() === tag.toLowerCase());
+const contains = (memo: Memo, text: string) =>
+  memo.content.toLowerCase().includes(text.toLowerCase());
+const key = (pinned: boolean, sortValue: string, id: string) =>
+  `${pinned ? "1" : "0"}${CURSOR_VALUE_SEPARATOR}${sortValue}${CURSOR_VALUE_SEPARATOR}${id}`;
+
+export function queryMemos(memos: Memo[], filters: MemoListFilters): MemoPage {
+  const { limit } = filters;
+  const sortValue = (memo: Memo) => (filters.sortByUpdated ? memo.updatedAt : memo.createdAt);
+  const cursor = filters.cursor ? decodeCursor(filters.cursor) : null;
+  if (filters.cursor && !cursor) throw new Error("Invalid memo cursor.");
+  const after = cursor ? key(cursor.p, cursor.v, cursor.i) : null;
+  const ordered = memos
+    .filter((memo) => memo.archived === Boolean(filters.archivedOnly))
+    .filter((memo) => !filters.publicOnly || memo.visibility === "public")
+    .filter((memo) => !filters.favoritesOnly || memo.favorite)
+    .filter((memo) => !filters.date || sameDay(memo.updatedAt, filters.date))
+    .filter((memo) => !filters.search || contains(memo, filters.search))
+    .filter((memo) => filters.tags.length === 0 || filters.tags.some((tag) => hasTag(memo, tag)))
+    .map((memo) => ({ memo, key: key(memo.pinned, sortValue(memo), memo.id) }))
+    .filter((item) => !after || item.key < after)
+    .sort((a, b) => (a.key < b.key ? 1 : -1));
+  const page = ordered.slice(0, limit).map((item) => item.memo);
+  const last = page.at(-1);
+  return {
+    memos: page,
+    nextCursor:
+      ordered.length > limit && last ? encodeCursor(last.pinned, sortValue(last), last.id) : null,
+  };
 }
 
-export async function listMemos(d1: D1Database, filters: MemoListFilters = {}): Promise<MemoPage> {
-  const sortColumn = filters.sortByUpdated ? memos.updatedAt : memos.createdAt;
-  const limit = filters.limit ?? DEFAULT_LIMIT;
-  const conditions = [filters.archivedOnly ? eq(memos.archived, true) : eq(memos.archived, false)];
-
-  if (filters.publicOnly) conditions.push(eq(memos.visibility, "public"));
-  if (filters.favoritesOnly) conditions.push(eq(memos.favorite, true));
-  if (filters.date) conditions.push(buildMemoDateCondition(memos.updatedAt, filters.date, "="));
-  if (filters.search) conditions.push(like(memos.excerpt, `%${filters.search}%`));
-  if (filters.tags?.length) {
-    const tagCondition = or(...buildMemoTagConditions(filters.tags));
-    if (tagCondition) conditions.push(tagCondition);
-  }
-  if (filters.cursor) {
-    const decoded = decodeCursor(filters.cursor);
-    if (!decoded) throw new Error("Invalid memo cursor.");
-    conditions.push(
-      sql`(${memos.pinned}, ${sortColumn}, ${memos.id}) < (${decoded.p ? 1 : 0}, ${decoded.v}, ${decoded.i})`,
-    );
-  }
-
-  const rows = await drizzle(d1)
-    .select()
-    .from(memos)
-    .where(and(...conditions))
-    .orderBy(desc(memos.pinned), desc(sortColumn), desc(memos.id))
-    .limit(limit + 1);
-  const hasMore = rows.length > limit;
-  const pageMemos = (hasMore ? rows.slice(0, limit) : rows).map(memoFromRow);
-  const lastMemo = pageMemos.at(-1);
-  const nextCursor =
-    hasMore && lastMemo
-      ? encodeCursor(
-          lastMemo.pinned,
-          filters.sortByUpdated ? lastMemo.updatedAt : lastMemo.createdAt,
-          lastMemo.id,
-        )
-      : null;
-
-  return { memos: pageMemos, nextCursor };
+export async function listMemos(env: AppEnv, filters: MemoListFilters): Promise<MemoPage> {
+  return queryMemos(await loadMemos(env), filters);
 }
 
-export async function listPublicMemos(d1: D1Database, limit: number): Promise<Memo[]> {
-  const rows = await drizzle(d1)
-    .select()
-    .from(memos)
-    .where(and(eq(memos.archived, false), eq(memos.visibility, "public")))
-    .orderBy(desc(memos.updatedAt), desc(memos.id))
-    .limit(limit);
-  return rows.map(memoFromRow);
+const live = (memos: Memo[], publicOnly: boolean) =>
+  memos.filter((memo) => !memo.archived && (!publicOnly || memo.visibility === "public"));
+
+export async function listPublicMemos(env: AppEnv, limit: number): Promise<Memo[]> {
+  return live(await loadMemos(env), true)
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+    .slice(0, limit);
 }
 
 export async function listMemoActivity(
-  d1: D1Database,
+  env: AppEnv,
   publicOnly: boolean,
   since: string,
 ): Promise<Memo[]> {
-  const conditions = [eq(memos.archived, false), gte(memos.createdAt, since)];
-  if (publicOnly) conditions.push(eq(memos.visibility, "public"));
-
-  const rows = await drizzle(d1)
-    .select()
-    .from(memos)
-    .where(and(...conditions))
-    .orderBy(desc(memos.createdAt), desc(memos.id));
-  return rows.map(memoFromRow);
+  return live(await loadMemos(env), publicOnly)
+    .filter((memo) => memo.createdAt >= since)
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
-export async function queryTagCounts(d1: D1Database, publicOnly = false): Promise<TagCount[]> {
-  const visibilityClause = publicOnly ? "AND visibility = 'public'" : "";
-  const { results } = await d1
-    .prepare(
-      `SELECT lower(json_each.value) AS name, COUNT(*) AS count
-       FROM memos, json_each(memos.tags_json)
-       WHERE archived = 0 ${visibilityClause}
-       GROUP BY lower(json_each.value)
-       ORDER BY count DESC, name ASC`,
-    )
-    .all<{ name: string; count: number }>();
+export function countTags(memos: Memo[], publicOnly = false): TagCount[] {
+  const names = live(memos, publicOnly).flatMap((memo) =>
+    memo.tags.map((tag) => tag.toLowerCase()),
+  );
+  return [...Map.groupBy(names, (name) => name)]
+    .map(([name, uses]) => ({ name, count: uses.length }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
 
-  return results.map((row) => ({ name: row.name, count: Number(row.count) }));
+export async function queryTagCounts(env: AppEnv, publicOnly = false): Promise<TagCount[]> {
+  return countTags(await loadMemos(env), publicOnly);
 }
 
 export async function countMemoStats(
-  d1: D1Database,
+  env: AppEnv,
   today: string,
   publicOnly = false,
 ): Promise<MemoStats> {
-  const visibilityClause = publicOnly ? "AND visibility = 'public'" : "";
-  const row = await d1
-    .prepare(
-      `SELECT
-        COUNT(*) AS total,
-        COALESCE(SUM(CASE WHEN substr(created_at, 1, 10) = ? THEN 1 ELSE 0 END), 0) AS today
-       FROM memos
-       WHERE archived = 0 ${visibilityClause}`,
-    )
-    .bind(today)
-    .first<{ total: number; today: number }>();
-
-  if (!row) throw new Error("Memo stats query returned no row.");
-  return { total: row.total, today: row.today };
+  const memos = live(await loadMemos(env), publicOnly);
+  return {
+    total: memos.length,
+    today: memos.filter((memo) => sameDay(memo.createdAt, today)).length,
+  };
 }
 
-export async function listAgentMemoRecords(
-  d1: D1Database,
-  filters: AgentMemoFilters,
-): Promise<MemoContentRecord[]> {
-  const conditions = [eq(memos.archived, false)];
-  if (filters.query) conditions.push(like(memos.excerpt, `%${filters.query}%`));
-  if (filters.fromDate) {
-    conditions.push(buildMemoDateCondition(memos.createdAt, filters.fromDate, ">="));
-  }
-  if (filters.toDate) {
-    conditions.push(buildMemoDateCondition(memos.createdAt, filters.toDate, "<="));
-  }
-  if (filters.tags?.length) conditions.push(...buildMemoTagConditions(filters.tags));
-
-  return drizzle(d1)
-    .select({
-      id: memos.id,
-      r2Key: memos.r2Key,
-      excerpt: memos.excerpt,
-      tags: memos.tagsJson,
-      createdAt: memos.createdAt,
-    })
-    .from(memos)
-    .where(and(...conditions))
-    .orderBy(desc(memos.createdAt))
-    .limit(filters.limit);
+export function filterAgentMemos(memos: Memo[], filters: AgentMemoFilters): Memo[] {
+  const from = filters.fromDate ? `${filters.fromDate}T00:00:00.000Z` : null;
+  const to = filters.toDate
+    ? new Date(Date.parse(`${filters.toDate}T00:00:00.000Z`) + DAY_MS).toISOString()
+    : null;
+  return memos
+    .filter((memo) => !memo.archived)
+    .filter((memo) => !filters.query || contains(memo, filters.query))
+    .filter((memo) => !from || memo.createdAt >= from)
+    .filter((memo) => !to || memo.createdAt < to)
+    .filter((memo) => filters.tags.every((tag) => hasTag(memo, tag)))
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+    .slice(0, filters.limit);
 }
 
-export async function insertMemoRow(d1: D1Database, row: typeof memos.$inferInsert): Promise<void> {
-  await drizzle(d1).insert(memos).values(row);
-}
-
-export async function updateMemoRow(
-  d1: D1Database,
-  id: string,
-  values: Partial<typeof memos.$inferInsert>,
-): Promise<MemoRow> {
-  const db = drizzle(d1);
-  await db.update(memos).set(values).where(eq(memos.id, id));
-  const [updated] = await db.select().from(memos).where(eq(memos.id, id)).limit(1);
-  return updated;
-}
-
-export async function deleteMemoRow(d1: D1Database, id: string): Promise<void> {
-  await drizzle(d1).delete(memos).where(eq(memos.id, id));
+export async function findMemo(env: AppEnv, id: string): Promise<Memo | null> {
+  const memo = (await loadMemos(env)).find((candidate) => candidate.id === id);
+  return memo === undefined ? null : memo;
 }

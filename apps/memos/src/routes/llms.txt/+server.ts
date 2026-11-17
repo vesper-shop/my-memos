@@ -9,6 +9,6 @@ import {
 import type { RequestHandler } from "./$types";
 
 export const GET: RequestHandler = async () => {
-  const memos = await listPublicMemos(env.DB, DISCOVERY_MEMO_LIMIT);
+  const memos = await listPublicMemos(env, DISCOVERY_MEMO_LIMIT);
   return discoveryResponse(createLlmsText(memos, siteOrigin()), "text/plain; charset=utf-8");
 };

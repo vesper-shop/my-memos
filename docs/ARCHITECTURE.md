@@ -22,10 +22,10 @@ Browser (in-memory Svelte Chat store)
   -> @my-memos/ai-core / pi Agent
   -> in-process MCP client with automatic protocol negotiation -> /api/mcp handler
   -> typed domain operations in apps/memos/src/lib/server
+  -> Vesper API (memos are Vesper entries without photos)
   -> Cloudflare bindings
-     - D1: structured memo indexes, searchable body mirrors, and auth tables
-     - R2: full memo markdown and agent memory files
-     - KV: derived caches
+     - R2: agent memory files
+     - KV: Vesper grant, owner sessions, profile, tag definitions and derived caches
 ```
 
 ## Workspace Structure
@@ -34,21 +34,22 @@ Browser (in-memory Svelte Chat store)
 
 The deployable application is the `@my-memos/app` workspace package defined in [apps/memos/package.json](../apps/memos/package.json).
 
-Void is configured at [apps/memos/void.config.ts](../apps/memos/void.config.ts), beside the SvelteKit package it prepares and deploys. `inference.appType` stays `framework`, so SvelteKit keeps routing and rendering. The SvelteKit Cloudflare adapter reads the generated `.void-wrangler.jsonc`. The repository-root scripts delegate Void commands to this workspace package. D1 schema changes are hand-written SQL in `apps/memos/db/migrations`, applied by `void db migrate` and `void deploy`; the app does not use Void's Drizzle schema generation.
+Void is configured at [apps/memos/void.config.ts](../apps/memos/void.config.ts), beside the SvelteKit package it prepares and deploys. `inference.appType` stays `framework`, so SvelteKit keeps routing and rendering. The SvelteKit Cloudflare adapter reads the generated `.void-wrangler.jsonc`. The repository-root scripts delegate Void commands to this workspace package. The app has no database.
 
 Key areas:
 
 - [apps/memos/src/routes](../apps/memos/src/routes)
   Page routes and API endpoints.
 - [apps/memos/src/lib/server](../apps/memos/src/lib/server)
-  Server-only auth, filters, domain services, and persistence adapters.
-  - [apps/memos/src/lib/server/db/schema.ts](../apps/memos/src/lib/server/db/schema.ts)
-    Drizzle ORM schema for the `memos` and `tag_definitions` tables; exports `MemoRow` and `TagDefinition`.
+  Server-only auth, filters, domain services, and the Vesper client.
+  - `apps/memos/src/lib/server/vesper.ts`
+    Vesper reads with the `VESPER_TOKEN` secret, writes with the OAuth grant, and sign-in.
   - `apps/memos/src/lib/server/memos`
-    Memo domain split into D1 repository queries, R2 body storage, KV-derived cache handling,
-    and a service that coordinates operations spanning those boundaries.
+    Memo domain: the repository reads Vesper entries into memos and filters them in memory; the
+    service writes through the Vesper API; `legacy-ids.json` maps pre-Vesper memo ids to entry ids.
   - `apps/memos/src/lib/server/tags`
-    D1 tag definitions and Jev classification; `createMemo` uses it to tag untagged memos.
+    Tag definitions in KV (seeded from `definitions.json`) and Jev classification; `createMemo`
+    uses it to tag untagged memos.
   - `apps/memos/src/lib/server/x-import.ts`
     Validates X/Twitter status URLs and the FxTwitter response fields used by the import route.
   - `apps/memos/src/lib/server/mcp`
@@ -58,8 +59,6 @@ Key areas:
   Contains two layout generations:
   - `views/` — default `Home`, `Chat`, and `Archive` views using the masthead-based layout and timeline feed.
   - `views-legacy/` — classic views kept for comparison via the in-page toggle; these use `AppShell` + `Sidebar` where applicable.
-- [apps/memos/db/migrations](../apps/memos/db/migrations)
-  D1 schema migrations applied by Void. These numbered SQL files are the source of truth; the Drizzle schema mirrors the runtime table shape for query building.
 
 ### Package: `packages/ui`
 
@@ -144,93 +143,42 @@ Route loader: [apps/memos/src/routes/chat/+page.server.ts](../apps/memos/src/rou
 
 ## Authentication
 
-Authentication is implemented with Better Auth and initialized in [apps/memos/src/lib/server/auth.ts](../apps/memos/src/lib/server/auth.ts).
-
-Current auth characteristics:
-
-- database-backed sessions in D1
-- sign-in through the you-find.me gateway (`genericOAuth`), with sign-up and email-based account
-  linking disabled so only the account bound to the gateway owner (`sub` `owner`) can sign in
-- secure cookies enabled automatically when `BETTER_AUTH_URL` is `https`
-
-Request bootstrapping happens in [apps/memos/src/hooks.server.ts](../apps/memos/src/hooks.server.ts), which:
-
-- constructs a Better Auth instance from the `DB` binding and `void/env` configuration
-- loads the current session
-- attaches `locals.user` and `locals.session`
-- delegates to `svelteKitHandler`
+Reads use `VESPER_TOKEN`, a workspace API token stored as a Worker secret, so every page lists memos
+without a session. Writes need the owner: `/auth/sign-in` registers the site as a Vesper OAuth client
+and starts an authorization-code flow with PKCE for `entries:read entries:write offline_access`.
+`/auth/callback` exchanges the code, calls Vesper's `/api/workspace`, accepts the grant only when the
+workspace UUID matches `VESPER_WORKSPACE`, stores the grant in KV and sets an `HttpOnly` session
+cookie whose id lives in KV for 30 days. The callback also stores the workspace handle, which the
+header card shows and links to `https://<handle>.noted-this.date/`. `/auth/sign-out` deletes the
+session. `locals.user` is the dynamic profile or `null`.
 
 ## Memo Storage Model
 
-Memo persistence is split deliberately across D1 and R2.
+Memos live in Vesper as entries without photos; this site keeps no copy. The repository reads the
+`all` and `archive` shelves from `/api/entries/documents`, turns each entry into a memo (its tags
+appended as the closing hashtag line) and caches the list in KV for 60 seconds. Lists, statistics,
+tag counts and Agent searches filter that list in memory. Creating, editing and deleting call
+Vesper's entries API and drop the cached list. Old `/memo/{id}` links with pre-Vesper ids redirect
+to the entry id.
 
-### D1
-
-Table defined in [apps/memos/db/migrations/0001_create_memos.sql](../apps/memos/db/migrations/0001_create_memos.sql). The Drizzle schema mirror lives in [apps/memos/src/lib/server/db/schema.ts](../apps/memos/src/lib/server/db/schema.ts).
-
-- `id`
-- `r2_key`
-- `tags_json`
-- `excerpt`
-- `created_at`
-- `updated_at`
-- `visibility`
-- `pinned`
-- `favorite`
-- `archived`
-
-Use D1 for:
-
-- list queries
-- filtering by date, tag, archive state, and visibility
-- tag definitions (`name`, `kind` of `type`, `topic` or `channel`, `description`) that drive Jev tagging
-
-Despite its name, `excerpt` currently mirrors the complete trimmed memo body so list rendering and `LIKE` search do not read R2. R2 remains canonical when loading an individual memo.
-
-### R2
-
-R2 stores:
-
-- full memo markdown body
-- chat support files such as `agent/PROMPT.md` and `agent/MEMORY.md`
-
-During `pnpm dev`, this binding proxies to the configured remote R2 bucket. D1 and KV are remote bindings as well, so local development reads and writes the configured Cloudflare resources.
-
-### KV
-
-KV stores generated Open Graph images and fetched font bytes. Tag counts are queried directly
-from D1 so page rendering does not depend on remote KV availability.
-
-Memo lists are **not** cached in KV — full-list JSON blobs caused KV size/corruption issues and CPU rate limits on Workers. Instead, lists are paginated via cursor-based `limit=25` queries directly against D1.
-
-Cache invalidation happens in domain services after successful mutations. Cache adapters own
-the concrete KV keys and generated OG invalidation calls.
+R2 keeps only `agent/PROMPT.md` and `agent/MEMORY.md`. KV keeps the Vesper client, grant and
+profile, owner sessions, tag definitions, the memo list cache and generated Open Graph images.
 
 ## Server Domain Logic
 
-Memo server logic lives under `apps/memos/src/lib/server/memos` with explicit external
-boundaries.
+Memo server logic lives under `apps/memos/src/lib/server/memos`.
 
-Responsibilities:
-
-- `repository.ts` maps D1 rows and owns memo list, statistics, tag, and Agent-facing queries
-  through Drizzle ORM (`drizzle-orm/d1`).
-- `storage.ts` owns canonical memo body reads and writes in R2.
+- `repository.ts` loads memos from Vesper and owns list, statistics, tag, and Agent-facing queries.
+- `service.ts` owns create, update and delete through the Vesper API.
 - `cache.ts` owns generated OG cache invalidation in KV.
-- `service.ts` owns create, update, delete, canonical-body loading, and Agent search
-  orchestration across D1, R2, and the remaining generated-image cache boundary.
 
 SvelteKit routes validate transport input and map typed domain errors to HTTP responses. MCP
-operations call memo domain functions instead of issuing their own D1/R2 queries.
+operations call memo domain functions.
 
-X post import is a narrow external boundary: the server accepts only HTTPS status URLs on
-`x.com` or `twitter.com`, extracts the numeric post ID, and requests the fixed
-`api.fxtwitter.com` host without user credentials. The resulting text, photo URLs rendered as
-separate Markdown image blocks, author attribution, and canonical source URL pass through the
-normal memo creation service and D1/R2 write path.
-X imports set the new memo's `favorite` flag during that same creation path.
-
-The SQL migrations in `apps/memos/db/migrations` are authoritative for the deployed schema. The Drizzle mirror (`apps/memos/src/lib/server/db/schema.ts`) describes that table to application code and exports `MemoRow` via `typeof memos.$inferSelect`, eliminating hand-written row types.
+X post import accepts only HTTPS status URLs on `x.com` or `twitter.com`, extracts the numeric post
+ID, and requests the fixed `api.fxtwitter.com` host without user credentials. The text, photo URLs
+as separate Markdown image blocks, attribution and source URL pass through `createMemo`, which marks
+the new memo a favorite.
 
 Agent tools are defined once as MCP tools in `apps/memos/src/lib/server/mcp`. The in-product Agent discovers them over an in-process modern MCP transport; it never imports implementations directly.
 
@@ -288,11 +236,10 @@ capabilities to `list_tags`, `list_memos`, `search_memos`, `get_memo`, `create_m
 Tools return structured objects: `{ tags }`, `{ memos }`, search `{ type: "memo-search-results", query, memos }`, single memos as `{ memo }`, and deletion `{ id, deleted: true }`; arguments reuse the REST field names (`fromDate`, `toDate`, `tags`, `limit`). Web search, URL reading, documentation lookup, memory updates, and visual rendering
 belong to the authenticated in-product Agent and cannot be invoked by external clients.
 
-External clients authenticate with access tokens issued by the you-find.me gateway
-(`https://you-find.me/api/auth`). Tokens must carry the `https://memos.you-find.me` audience and the
-`memos:write` scope; the gateway issues memos scopes only to its owner. The resource server publishes
-`/.well-known/oauth-protected-resource`, and `/api/mcp` answers unauthenticated requests with an RFC
-9728 `WWW-Authenticate` challenge so MCP clients can discover the gateway and register themselves.
+External clients authenticate with Vesper access tokens. The site checks a token by calling Vesper's
+`/api/workspace` with it and comparing the workspace UUID, and caches the answer for five minutes.
+`/.well-known/oauth-protected-resource` names Vesper as the authorization server, and `/api/mcp`
+answers unauthenticated requests with an RFC 9728 `WWW-Authenticate` challenge.
 
 The web app and external clients share one REST surface. Each route accepts the owner session or
 `Authorization: Bearer <access token>`. A request that sends `Authorization` is checked only against the token
@@ -335,7 +282,6 @@ If these drift, the app may still compile but fail at runtime.
 ## Known Inconsistencies To Watch
 
 - `apps/memos/void.config.ts` is production-shaped rather than environment-sliced.
-- D1's `excerpt` column currently mirrors the full memo body; the name understates its role and duplicates canonical R2 data.
-- Schema changes should be made as hand-written SQL in `apps/memos/db/migrations` first, then mirrored in the Drizzle schema. Do not run `void db generate` or add Drizzle journal/snapshot files there.
+- Every page load may read the whole memo list from Vesper when the 60-second KV cache is cold.
 
 These do not block the current runtime, but they matter when changing deployment or storage behavior.

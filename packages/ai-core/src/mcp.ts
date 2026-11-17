@@ -4,7 +4,7 @@ import {
   type Tool as McpTool,
 } from "@modelcontextprotocol/client";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Type, type TSchema } from "@earendil-works/pi-ai";
+import { Type, type TSchema } from "typebox";
 import type { ConnectMcpOptions, McpConnection, McpToolClient } from "./types";
 import { toAgentToolResult } from "./utils";
 

@@ -11,5 +11,5 @@ export const GET: RequestHandler = async ({ request, locals }) => {
     );
   }
 
-  return Response.json({ definitions: await listTagDefinitions(env.DB) });
+  return Response.json({ definitions: await listTagDefinitions(env) });
 };

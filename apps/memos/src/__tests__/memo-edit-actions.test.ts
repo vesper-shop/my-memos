@@ -17,7 +17,6 @@ import { createEditActions } from "#lib/state/memo-actions.svelte.ts";
 
 const firstMemo = {
   id: "first",
-  r2Key: "memos/2026/08/first.md",
   content: "Original",
   tags: [],
   createdAt: "2026-08-20T00:00:00.000Z",
@@ -31,7 +30,6 @@ const firstMemo = {
 const secondMemo = {
   ...firstMemo,
   id: "second",
-  r2Key: "memos/2026/08/second.md",
   content: "Second",
 } satisfies Memo;
 

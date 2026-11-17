@@ -6,6 +6,7 @@ import {
   listMemoActivity,
   listMemos,
   listTagCounts,
+  NO_MEMO_FILTERS,
 } from "#lib/server/memos/index.ts";
 import { parsePageFilters } from "#lib/server/filters.ts";
 import { error } from "@sveltejs/kit";
@@ -44,17 +45,18 @@ export const load: PageServerLoad = async ({ url, locals, setHeaders }) => {
   const today = new Date().toISOString().slice(0, 10);
 
   const [{ memos, nextCursor }, tagCounts, memoStats, activityMemos] = await Promise.all([
-    listMemos(env.DB, {
-      search: filters.search || undefined,
-      date: filters.date || undefined,
-      tags: filters.tags.length > 0 ? filters.tags : undefined,
+    listMemos(env, {
+      ...NO_MEMO_FILTERS,
+      search: filters.search || null,
+      date: filters.date || null,
+      tags: filters.tags,
       publicOnly,
       sortByUpdated,
       limit: PAGE_LIMIT,
     }),
-    listTagCounts(env.DB, publicOnly),
-    countMemoStats(env.DB, today, publicOnly),
-    listMemoActivity(env.DB, publicOnly, activitySince()),
+    listTagCounts(env, publicOnly),
+    countMemoStats(env, today, publicOnly),
+    listMemoActivity(env, publicOnly, activitySince()),
   ]);
 
   return {

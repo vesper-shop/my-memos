@@ -5,6 +5,7 @@ import {
   isValidMemoDate,
   listMemos,
   listTagCounts,
+  NO_MEMO_FILTERS,
 } from "#lib/server/memos/index.ts";
 import { parsePageFilters } from "#lib/server/filters.ts";
 import type { PageServerLoad } from "./$types";
@@ -25,13 +26,14 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   }
 
   const [{ memos, nextCursor }, tagCounts] = await Promise.all([
-    listMemos(env.DB, {
+    listMemos(env, {
+      ...NO_MEMO_FILTERS,
       archivedOnly: true,
-      date: filters.date || undefined,
-      tags: filters.tags.length > 0 ? filters.tags : undefined,
+      date: filters.date || null,
+      tags: filters.tags,
       limit: PAGE_LIMIT,
     }),
-    listTagCounts(env.DB),
+    listTagCounts(env),
   ]);
 
   return {

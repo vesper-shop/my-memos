@@ -1,9 +1,9 @@
-import { asc, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/d1";
 import { z } from "zod";
-import { tagDefinitions, type TagDefinition } from "#lib/server/db/schema.ts";
+import type { AppEnv } from "#lib/server/types.ts";
+import seed from "./definitions.json";
 
-export type { TagDefinition };
+const KEY = "tags:definitions";
+export const TAG_KINDS = ["type", "topic", "channel"] as const;
 
 export const tagNameSchema = z
   .string()
@@ -12,35 +12,39 @@ export const tagNameSchema = z
   .regex(/^[\p{Letter}\p{Number}_\-/]+$/u, "Tag names may contain letters, numbers, _, - and /.");
 
 export const tagDefinitionInputSchema = z.object({
-  kind: z.enum(tagDefinitions.kind.enumValues),
+  kind: z.enum(TAG_KINDS),
   description: z.string().trim().min(1).max(200),
 });
 
-export async function listTagDefinitions(d1: D1Database): Promise<TagDefinition[]> {
-  return drizzle(d1)
-    .select()
-    .from(tagDefinitions)
-    .orderBy(asc(tagDefinitions.kind), asc(tagDefinitions.name));
+const definitionSchema = tagDefinitionInputSchema.extend({ name: z.string() });
+export type TagDefinition = z.infer<typeof definitionSchema>;
+
+const sorted = (definitions: TagDefinition[]) =>
+  definitions.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
+
+export async function listTagDefinitions(env: AppEnv): Promise<TagDefinition[]> {
+  const stored = await env.MEMOS_CACHE.get(KEY, "json");
+  return z.array(definitionSchema).parse(stored === null ? seed : stored);
 }
 
+const save = (env: AppEnv, definitions: TagDefinition[]) =>
+  env.MEMOS_CACHE.put(KEY, JSON.stringify(sorted(definitions)));
+
 export async function upsertTagDefinition(
-  d1: D1Database,
+  env: AppEnv,
   definition: TagDefinition,
 ): Promise<TagDefinition> {
-  await drizzle(d1)
-    .insert(tagDefinitions)
-    .values(definition)
-    .onConflictDoUpdate({
-      target: tagDefinitions.name,
-      set: { kind: definition.kind, description: definition.description },
-    });
+  const definitions = (await listTagDefinitions(env)).filter(
+    (item) => item.name !== definition.name,
+  );
+  await save(env, [...definitions, definition]);
   return definition;
 }
 
-export async function deleteTagDefinition(d1: D1Database, name: string): Promise<boolean> {
-  const deleted = await drizzle(d1)
-    .delete(tagDefinitions)
-    .where(eq(tagDefinitions.name, name))
-    .returning();
-  return deleted.length > 0;
+export async function deleteTagDefinition(env: AppEnv, name: string): Promise<boolean> {
+  const definitions = await listTagDefinitions(env);
+  const kept = definitions.filter((item) => item.name !== name);
+  if (kept.length === definitions.length) return false;
+  await save(env, kept);
+  return true;
 }

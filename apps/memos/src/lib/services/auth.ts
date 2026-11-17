@@ -1,11 +1,8 @@
-import { createAuthClient } from "better-auth/svelte";
-
-export const authClient = createAuthClient();
-
-export const { signIn } = authClient;
+export function signIn(next: string) {
+  window.location.href = `/auth/sign-in?next=${encodeURIComponent(next)}`;
+}
 
 export async function signOut() {
-  const response = await authClient.signOut();
+  await fetch("/auth/sign-out", { method: "POST" });
   window.location.href = "/";
-  return response;
 }

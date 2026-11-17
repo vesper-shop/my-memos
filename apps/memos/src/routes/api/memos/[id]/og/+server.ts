@@ -8,7 +8,7 @@ const SVG_FORMAT = "svg";
 
 export const GET = async ({ params, url }: { params: { id: string }; url: URL }) => {
   const { id } = params;
-  const memo = await getMemo(env.DB, env.MEMOS_BUCKET, id);
+  const memo = await getMemo(env, id);
 
   if (!memo || memo.visibility !== "public") {
     error(404, "Memo not found.");

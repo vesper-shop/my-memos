@@ -1,9 +1,9 @@
 import { defineEnv, string, url } from "void/env";
 
 export default defineEnv({
-  BETTER_AUTH_URL: url().default("https://memos.you-find.me"),
-  BETTER_AUTH_SECRET: string(),
+  SITE_URL: url().default("https://memos.you-find.me"),
   CF_ACCOUNT_ID: string().default("fb71c4eceaf623ae1b19b8b37d7a38cf"),
   CF_AIG_TOKEN: string(),
   TAVILY_API_KEY: string(),
+  VESPER_TOKEN: string(),
 });

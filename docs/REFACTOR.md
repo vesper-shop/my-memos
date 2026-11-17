@@ -38,7 +38,7 @@ https://gateway.ai.cloudflare.com/v1/{account}/default/deepseek
 `POST /api/mcp` is a single stateless endpoint created with the official v2 TypeScript SDK and `legacy: "stateless"`. The in-product client uses automatic version negotiation: it prefers the modern discovery flow and can fall back to the stateless `2025-11-25` initialize handshake. Session headers are rejected.
 
 The in-product Agent reaches this handler through an in-process `fetch` with a trusted principal
-derived from Better Auth. It receives the complete Agent toolset, including web search, URL
+derived from the owner's Vesper session. It receives the complete Agent toolset, including web search, URL
 reading, documentation lookup, memory updates, and visual rendering.
 
 External MCP clients receive a narrower allowlist:
@@ -46,8 +46,8 @@ External MCP clients receive a narrower allowlist:
 - `list_tags`, `list_memos`, `search_memos`, `get_memo`
 - `create_memo`, `update_memo`, `delete_memo`
 
-They authenticate with access tokens issued by the you-find.me gateway, bound to the
-`https://memos.you-find.me` audience and the `memos:write` scope.
+They authenticate with Vesper access tokens for the owner's workspace, which the site checks
+against Vesper's `/api/workspace`.
 
 MCP operations parse tool inputs and adapt memo domain results for Agent consumption. The external
 REST routes under `/api/memos` and `/api/tags` call the memo domain directly and return

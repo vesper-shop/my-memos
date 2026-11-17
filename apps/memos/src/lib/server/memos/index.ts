@@ -21,7 +21,7 @@ export {
   memoDateSchema,
   memoSearchSchema,
 } from "./validation";
-export { MemoError } from "./types";
+export { MemoError, NO_MEMO_FILTERS } from "./types";
 export type {
   AgentMemoFilters,
   AgentMemoResult,

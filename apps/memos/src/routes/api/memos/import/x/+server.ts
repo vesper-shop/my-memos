@@ -47,7 +47,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     content += `\n\n${images.join("\n\n")}`;
   }
   content += `\n\n— ${author.name} (@${author.screen_name})\n${url}`;
-  const memo = await createMemo(env.DB, env.MEMOS_BUCKET, {
+  const memo = await createMemo(env, {
     content,
     visibility: result.data.visibility,
     tags: [],

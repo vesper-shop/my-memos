@@ -6,12 +6,12 @@ import type { RequestHandler } from "./$types";
 import type { UpdateMemoInput } from "#lib/server/memos/types.ts";
 
 const updateMemoSchema = z.object({
-  content: z.string().trim().min(1).optional(),
-  visibility: z.enum(["public", "private"]).optional(),
-  tags: z.array(z.string()).optional(),
-  pinned: z.boolean().optional(),
-  favorite: z.boolean().optional(),
-  archived: z.boolean().optional(),
+  content: z.string().trim().min(1).nullable().default(null),
+  visibility: z.enum(["public", "private"]).nullable().default(null),
+  tags: z.array(z.string()).nullable().default(null),
+  pinned: z.boolean().nullable().default(null),
+  favorite: z.boolean().nullable().default(null),
+  archived: z.boolean().nullable().default(null),
 });
 
 export const GET: RequestHandler = async ({ request, params, locals }) => {
@@ -22,7 +22,7 @@ export const GET: RequestHandler = async ({ request, params, locals }) => {
     );
   }
 
-  const memo = await getMemo(env.DB, env.MEMOS_BUCKET, params.id);
+  const memo = await getMemo(env, params.id);
   return memo
     ? Response.json({ memo })
     : Response.json({ error: "Memo not found." }, { status: 404 });
@@ -61,7 +61,7 @@ export const PATCH: RequestHandler = async ({ request, params, locals }) => {
   const input: UpdateMemoInput = result.data;
 
   try {
-    const memo = await updateMemo(env.DB, env.MEMOS_BUCKET, env.MEMOS_CACHE, id, input);
+    const memo = await updateMemo(env, id, input);
     return Response.json({ memo });
   } catch (error) {
     if (!(error instanceof MemoError)) throw error;
@@ -80,7 +80,7 @@ export const DELETE: RequestHandler = async ({ request, params, locals }) => {
   const { id } = params;
 
   try {
-    await deleteMemo(env.DB, env.MEMOS_BUCKET, env.MEMOS_CACHE, id);
+    await deleteMemo(env, id);
     return new Response(null, { status: 204 });
   } catch (error) {
     if (!(error instanceof MemoError)) throw error;

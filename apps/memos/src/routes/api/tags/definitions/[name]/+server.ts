@@ -24,7 +24,7 @@ export const PUT: RequestHandler = async ({ request, locals, params }) => {
   }
 
   return Response.json({
-    definition: await upsertTagDefinition(env.DB, { name: name.data, ...input.data }),
+    definition: await upsertTagDefinition(env, { name: name.data, ...input.data }),
   });
 };
 
@@ -38,7 +38,7 @@ export const DELETE: RequestHandler = async ({ request, locals, params }) => {
 
   const name = tagNameSchema.safeParse(params.name);
   if (!name.success) return Response.json({ error: "Tag name is invalid." }, { status: 400 });
-  if (!(await deleteTagDefinition(env.DB, name.data))) {
+  if (!(await deleteTagDefinition(env, name.data))) {
     return Response.json({ error: "Tag definition not found." }, { status: 404 });
   }
 

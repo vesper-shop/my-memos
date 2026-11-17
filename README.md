@@ -2,16 +2,16 @@
 
 A personal memo app built with SvelteKit, deployed as a Cloudflare Worker.
 
-- **Storage** — D1 for memo indexes and searchable body mirrors, R2 for canonical markdown, and KV for disposable caches
-- **Auth** — sign-in through the you-find.me OAuth gateway (Better Auth `genericOAuth`); only the account bound to the gateway owner (`sub` `owner`) can sign in
+- **Storage** — memos live in [Vesper](https://noted-this.date) and are read with a workspace API token (`VESPER_TOKEN`); R2 keeps the Agent's memory and KV the grant, sessions and caches
+- **Auth** — reads use the token; writes need a Vesper sign-in, and the profile card shows the signed-in workspace handle
 - **AI chat** — Cloudflare AI Gateway with memo-aware tools (list, search, create, update, delete)
-- **Stack** — SvelteKit · Drizzle ORM · pnpm workspace · adapter-cloudflare
+- **Stack** — SvelteKit · pnpm workspace · adapter-cloudflare
 
 See [`docs/`](docs/) for architecture, deployment, and design system details.
 
 ## MCP client
 
-Connect a Streamable HTTP MCP client to the public endpoint. The client discovers the you-find.me
+Connect a Streamable HTTP MCP client to the public endpoint. The client discovers Vesper as the
 authorization server from `/.well-known/oauth-protected-resource`, registers itself, and signs the
 owner in through OAuth:
 
@@ -26,7 +26,7 @@ owner in through OAuth:
 }
 ```
 
-Access tokens must carry the `https://memos.you-find.me` audience and the `memos:write` scope. The
+Access tokens must be Vesper tokens for the owner's workspace. The
 endpoint supports MCP `2026-07-28` and stateless `2025-11-25` clients. It does not issue an
 `Mcp-Session-Id`.
 

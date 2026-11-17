@@ -31,9 +31,9 @@ const IN_PRODUCT_TOOLS = [
 
 function fakeEnv(): AppEnv {
   return {
-    DB: {} as D1Database,
     MEMOS_BUCKET: {} as R2Bucket,
     MEMOS_CACHE: {} as KVNamespace,
+    VESPER_TOKEN: "test-token",
   };
 }
 

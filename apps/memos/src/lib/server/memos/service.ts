@@ -1,158 +1,91 @@
+import { z } from "zod";
 import { classifyMemo, listTagDefinitions } from "#lib/server/tags/index.ts";
-import { replaceTrailingHashtags } from "#lib/utils/tags.ts";
+import type { AppEnv } from "#lib/server/types.ts";
+import { vesperWrite } from "#lib/server/vesper.ts";
 import type { Memo, TagCount } from "#lib/types.ts";
 import { invalidateMemoOgCache } from "./cache";
-import {
-  deleteMemoRow,
-  findMemoRow,
-  insertMemoRow,
-  listAgentMemoRecords,
-  memoFromRow,
-  queryTagCounts,
-  updateMemoRow,
-} from "./repository";
-import { deleteMemoBody, readMemoBody, writeMemoBody } from "./storage";
+import { filterAgentMemos, findMemo, forgetMemos, loadMemos, queryTagCounts } from "./repository";
 import type { AgentMemoFilters, AgentMemoResult, CreateMemoInput, UpdateMemoInput } from "./types";
 import { MemoError } from "./types";
-import { buildMemoR2Key, createMemoId, normalizeTags } from "./utils";
+import { normalizeTags } from "./utils";
 
-export async function getMemo(d1: D1Database, bucket: R2Bucket, id: string): Promise<Memo | null> {
-  const row = await findMemoRow(d1, id);
-  if (!row) return null;
+const createdSchema = z.object({ id: z.string() });
 
-  const memo = memoFromRow(row);
-  memo.content = (await readMemoBody(bucket, row.r2Key)) ?? memo.content;
-  return memo;
-}
+export const getMemo = (env: AppEnv, id: string): Promise<Memo | null> => findMemo(env, id);
 
-export async function listTagCounts(d1: D1Database, publicOnly = false): Promise<TagCount[]> {
-  return queryTagCounts(d1, publicOnly);
-}
+export const listTagCounts = (env: AppEnv, publicOnly = false): Promise<TagCount[]> =>
+  queryTagCounts(env, publicOnly);
 
 export async function listAgentMemos(
-  d1: D1Database,
+  env: AppEnv,
   filters: AgentMemoFilters,
 ): Promise<AgentMemoResult[]> {
-  const records = await listAgentMemoRecords(d1, filters);
-  return records.map((record) => ({
-    id: record.id,
-    r2Key: record.r2Key,
-    createdAt: record.createdAt,
-    tags: record.tags,
-    content: record.excerpt,
+  return filterAgentMemos(await loadMemos(env), filters).map((memo) => ({
+    id: memo.id,
+    createdAt: memo.createdAt,
+    tags: memo.tags,
+    content: memo.content,
   }));
 }
 
-export async function searchAgentMemos(
-  d1: D1Database,
-  bucket: R2Bucket,
-  filters: AgentMemoFilters,
-): Promise<AgentMemoResult[]> {
-  const records = await listAgentMemoRecords(d1, filters);
-  return Promise.all(
-    records.map(async (record) => ({
-      id: record.id,
-      r2Key: record.r2Key,
-      createdAt: record.createdAt,
-      tags: record.tags,
-      content: (await readMemoBody(bucket, record.r2Key)) ?? record.excerpt,
-    })),
-  );
-}
+export const searchAgentMemos = listAgentMemos;
 
-export async function createMemo(
-  d1: D1Database,
-  bucket: R2Bucket,
-  input: CreateMemoInput,
-): Promise<Memo> {
-  const now = new Date();
-  const id = createMemoId(now);
+const bodyOf = (content: string) => {
+  const lines = content.trimEnd().split("\n");
+  while (lines.length > 0 && /^(#[^\s#]+\s*)+$/.test(lines[lines.length - 1].trim())) lines.pop();
+  return lines.join("\n").trimEnd();
+};
+
+export async function createMemo(env: AppEnv, input: CreateMemoInput): Promise<Memo> {
   const writtenTags = input.tags.length ? input.tags : normalizeTags(input.content);
   const tags = writtenTags.length
     ? writtenTags
-    : await classifyMemo(input.content, await listTagDefinitions(d1));
-  const r2Key = buildMemoR2Key(id, now);
-  const content = writtenTags.length
-    ? input.content.trim()
-    : replaceTrailingHashtags(input.content.trim(), tags);
-  const nowIso = now.toISOString();
-
-  await writeMemoBody(bucket, r2Key, content);
-  await insertMemoRow(d1, {
-    id,
-    r2Key,
-    tagsJson: tags,
-    excerpt: content,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-    visibility: input.visibility,
-    pinned: false,
-    favorite: input.favorite,
-    archived: false,
+    : await classifyMemo(input.content, await listTagDefinitions(env));
+  const response = await vesperWrite(env, "/api/entries", {
+    method: "POST",
+    body: JSON.stringify({
+      body: bodyOf(input.content),
+      tags,
+      visibility: input.visibility,
+      favorite: input.favorite,
+    }),
   });
-  return {
-    id,
-    r2Key,
-    content,
-    tags,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-    visibility: input.visibility,
-    pinned: false,
-    favorite: input.favorite,
-    archived: false,
-  };
+  const { id } = createdSchema.parse(await response.json());
+  await forgetMemos(env);
+  const memo = await findMemo(env, id);
+  if (!memo) throw new MemoError("not_found", `Memo not found after creating it: ${id}`);
+  return memo;
 }
 
-export async function updateMemo(
-  d1: D1Database,
-  bucket: R2Bucket,
-  cache: KVNamespace,
-  id: string,
-  input: UpdateMemoInput,
-): Promise<Memo> {
-  const existing = await findMemoRow(d1, id);
+export async function updateMemo(env: AppEnv, id: string, input: UpdateMemoInput): Promise<Memo> {
+  const existing = await findMemo(env, id);
   if (!existing) throw new MemoError("not_found", `Memo not found: ${id}`);
-
-  const affectsOgImage = input.content !== undefined || input.tags !== undefined;
-  if (affectsOgImage) await invalidateMemoOgCache(cache, id);
-  const values: Parameters<typeof updateMemoRow>[2] = {};
-
-  if (input.content !== undefined) {
-    const content = input.content.trim();
-    await writeMemoBody(bucket, existing.r2Key, content);
-    values.excerpt = content;
-    values.tagsJson = input.tags?.length ? input.tags : normalizeTags(content);
-  } else if (input.tags !== undefined) {
-    values.tagsJson = input.tags;
-    const storedBody = await readMemoBody(bucket, existing.r2Key);
-    if (storedBody !== null) {
-      const body = replaceTrailingHashtags(storedBody, input.tags);
-      await writeMemoBody(bucket, existing.r2Key, body);
-      values.excerpt = body;
-    }
-  }
-
-  if (input.visibility !== undefined) values.visibility = input.visibility;
-  if (input.pinned !== undefined) values.pinned = input.pinned;
-  if (input.favorite !== undefined) values.favorite = input.favorite;
-  if (input.archived !== undefined) values.archived = input.archived;
-  values.updatedAt = new Date().toISOString();
-
-  const updated = await updateMemoRow(d1, id, values);
-  return memoFromRow(updated);
+  if (input.content !== null || input.tags !== null)
+    await invalidateMemoOgCache(env.MEMOS_CACHE, id);
+  const writtenTags =
+    input.content !== null && (input.tags === null || input.tags.length === 0)
+      ? normalizeTags(input.content)
+      : input.tags;
+  await vesperWrite(env, `/api/entries/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      body: input.content === null ? null : bodyOf(input.content),
+      tags: writtenTags,
+      visibility: input.visibility,
+      pinned: input.pinned,
+      favorite: input.favorite,
+      archived: input.archived,
+    }),
+  });
+  await forgetMemos(env);
+  const updated = await findMemo(env, id);
+  if (!updated) throw new MemoError("not_found", `Memo not found: ${id}`);
+  return updated;
 }
 
-export async function deleteMemo(
-  d1: D1Database,
-  bucket: R2Bucket,
-  cache: KVNamespace,
-  id: string,
-): Promise<void> {
-  const existing = await findMemoRow(d1, id);
-  if (!existing) throw new MemoError("not_found", `Memo not found: ${id}`);
-
-  await invalidateMemoOgCache(cache, id);
-  await deleteMemoRow(d1, id);
-  await deleteMemoBody(bucket, existing.r2Key);
+export async function deleteMemo(env: AppEnv, id: string): Promise<void> {
+  if (!(await findMemo(env, id))) throw new MemoError("not_found", `Memo not found: ${id}`);
+  await invalidateMemoOgCache(env.MEMOS_CACHE, id);
+  await vesperWrite(env, `/api/entries/${id}`, { method: "DELETE" });
+  await forgetMemos(env);
 }

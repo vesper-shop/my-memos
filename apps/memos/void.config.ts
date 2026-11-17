@@ -25,15 +25,6 @@ export default defineConfig({
       directory: ".svelte-kit/cloudflare",
       binding: "ASSETS",
     },
-    d1_databases: [
-      {
-        binding: "DB",
-        database_name: "my-memos",
-        database_id: "02a94452-aeeb-4c5e-8846-6750347f6cad",
-        migrations_dir: "./db/migrations",
-        remote: true,
-      },
-    ],
     kv_namespaces: [
       {
         binding: "MEMOS_CACHE",

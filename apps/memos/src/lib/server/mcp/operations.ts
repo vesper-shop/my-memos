@@ -40,19 +40,20 @@ export function createDomainOperations(env: AppEnv): DomainOperation[] {
       description:
         "List all memo tags with counts. Call this before filtering by a user-provided tag.",
       schema: z.object({}),
-      execute: async () => ({ tags: await listTagCounts(env.DB) }),
+      execute: async () => ({ tags: await listTagCounts(env) }),
     }),
     defineOperation({
       name: "list_memos",
       description: "Browse memos by date range and tags without requiring keywords.",
       schema: z.object({
-        fromDate: memoDateSchema.optional(),
-        toDate: memoDateSchema.optional(),
-        tags: z.array(z.string()).optional(),
+        fromDate: memoDateSchema.nullable().default(null),
+        toDate: memoDateSchema.nullable().default(null),
+        tags: z.array(z.string()).default([]),
         limit: z.number().int().min(1).max(20).default(10),
       }),
       execute: async ({ fromDate, toDate, tags, limit }) => ({
-        memos: await listAgentMemos(env.DB, {
+        memos: await listAgentMemos(env, {
+          query: null,
           fromDate,
           toDate,
           tags,
@@ -65,7 +66,7 @@ export function createDomainOperations(env: AppEnv): DomainOperation[] {
       description: "Read one memo with its full content by ID.",
       schema: z.object({ id: z.string() }),
       execute: async ({ id }) => {
-        const memo = await getMemo(env.DB, env.MEMOS_BUCKET, id);
+        const memo = await getMemo(env, id);
         if (!memo) throw new DomainError("not_found", "Memo not found.");
         return { memo };
       },
@@ -75,12 +76,12 @@ export function createDomainOperations(env: AppEnv): DomainOperation[] {
       description: "Search memo contents by keyword, optionally constrained by dates and tags.",
       schema: z.object({
         query: memoSearchSchema.refine((value) => value.length > 0, "Search cannot be empty."),
-        fromDate: memoDateSchema.optional(),
-        toDate: memoDateSchema.optional(),
-        tags: z.array(z.string()).optional(),
+        fromDate: memoDateSchema.nullable().default(null),
+        toDate: memoDateSchema.nullable().default(null),
+        tags: z.array(z.string()).default([]),
       }),
       execute: async ({ query, fromDate, toDate, tags }) => {
-        const memoResults = await searchAgentMemos(env.DB, env.MEMOS_BUCKET, {
+        const memoResults = await searchAgentMemos(env, {
           query,
           fromDate,
           toDate,
@@ -104,7 +105,7 @@ export function createDomainOperations(env: AppEnv): DomainOperation[] {
         visibility: z.enum(["private", "public"]).default("private"),
         favorite: z.boolean().default(false),
       }),
-      execute: async (input) => ({ memo: await createMemo(env.DB, env.MEMOS_BUCKET, input) }),
+      execute: async (input) => ({ memo: await createMemo(env, input) }),
     }),
     defineOperation({
       name: "update_memo",
@@ -112,17 +113,17 @@ export function createDomainOperations(env: AppEnv): DomainOperation[] {
       mutation: true,
       schema: z.object({
         id: z.string(),
-        content: z.string().optional(),
-        tags: z.array(z.string()).optional(),
-        visibility: z.enum(["private", "public"]).optional(),
-        pinned: z.boolean().optional(),
-        favorite: z.boolean().optional(),
-        archived: z.boolean().optional(),
+        content: z.string().nullable().default(null),
+        tags: z.array(z.string()).nullable().default(null),
+        visibility: z.enum(["private", "public"]).nullable().default(null),
+        pinned: z.boolean().nullable().default(null),
+        favorite: z.boolean().nullable().default(null),
+        archived: z.boolean().nullable().default(null),
       }),
       execute: async ({ id, ...input }) => {
-        if (Object.values(input).every((value) => value === undefined))
+        if (Object.values(input).every((value) => value === null))
           throw new DomainError("invalid_input", "No changes specified.");
-        return { memo: await updateMemo(env.DB, env.MEMOS_BUCKET, env.MEMOS_CACHE, id, input) };
+        return { memo: await updateMemo(env, id, input) };
       },
     }),
     defineOperation({
@@ -131,7 +132,7 @@ export function createDomainOperations(env: AppEnv): DomainOperation[] {
       mutation: true,
       schema: z.object({ id: z.string() }),
       execute: async ({ id }) => {
-        await deleteMemo(env.DB, env.MEMOS_BUCKET, env.MEMOS_CACHE, id);
+        await deleteMemo(env, id);
         return { id, deleted: true };
       },
     }),

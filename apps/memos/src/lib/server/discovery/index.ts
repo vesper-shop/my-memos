@@ -11,7 +11,7 @@ const TITLE_LENGTH = 60;
 const DISALLOWED_PATHS = ["/api/", "/archive", "/favorites", "/chat"];
 
 export function siteOrigin(): URL {
-  return new URL(env.BETTER_AUTH_URL);
+  return new URL(env.SITE_URL);
 }
 
 export function memoUrl(origin: URL, id: string): string {
@@ -132,7 +132,7 @@ export function createLlmsText(memos: readonly Memo[], origin: URL): string {
     "",
     "## API",
     "",
-    `- [REST API](${new URL("/api/openapi.json", origin).href}): ${new URL("/api", origin).href} for memos (list, search, read, write) and tags. Anonymous list reads return public memos; everything else requires \`Authorization: Bearer <access token>\` issued by you-find.me or the owner session.`,
+    `- [REST API](${new URL("/api/openapi.json", origin).href}): ${new URL("/api", origin).href} for memos (list, search, read, write) and tags. Anonymous list reads return public memos; everything else requires \`Authorization: Bearer <access token>\` issued by Vesper or the owner session.`,
     `- [MCP](${new URL("/api/mcp", origin).href}): Stateless MCP endpoint with the same Bearer key.`,
     "",
     "## Memos",

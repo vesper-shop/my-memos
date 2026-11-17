@@ -18,11 +18,19 @@ const createMemoSchema = z.object({
 });
 
 const listQuerySchema = z.object({
-  cursor: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional(),
-  search: memoSearchSchema.optional(),
-  date: memoDateSchema.optional(),
-  tags: z.string().optional(),
+  cursor: z.string().nullable().default(null),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  search: memoSearchSchema.nullable().default(null),
+  date: memoDateSchema.nullable().default(null),
+  tags: z
+    .string()
+    .default("")
+    .transform((value) =>
+      value
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    ),
   publicOnly: z
     .string()
     .optional()
@@ -71,17 +79,12 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
   }
 
   const effectivePublic = publicOnly || !owner;
-  const tagList = tags
-    ?.split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
-
-  const memoPage = await listMemos(env.DB, {
+  const memoPage = await listMemos(env, {
     cursor,
     limit,
     search,
     date,
-    tags: tagList,
+    tags,
     publicOnly: effectivePublic,
     archivedOnly,
     favoritesOnly,
@@ -115,7 +118,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     return Response.json({ error: "Memo tags are invalid." }, { status: 400 });
   }
 
-  const memo = await createMemo(env.DB, env.MEMOS_BUCKET, result.data);
+  const memo = await createMemo(env, result.data);
 
   return Response.json({ memo }, { status: 201 });
 };

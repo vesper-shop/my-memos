@@ -1,12 +1,15 @@
 import { env } from "cloudflare:workers";
-import { error } from "@sveltejs/kit";
+import { error, redirect } from "@sveltejs/kit";
+import legacyIds from "#lib/server/memos/legacy-ids.json";
 import { getMemo } from "#lib/server/memos/index.ts";
 import { memoSummary, memoTitle, memoUrl, siteOrigin } from "#lib/server/discovery/index.ts";
 import { SITE_NAME } from "#lib/site.ts";
 
 export const load = async ({ params, locals }: { params: { id: string }; locals: App.Locals }) => {
   const { id } = params;
-  const memo = await getMemo(env.DB, env.MEMOS_BUCKET, id);
+  const moved = Object.entries(legacyIds).find(([legacy]) => legacy === id);
+  if (moved) redirect(301, `/memo/${moved[1]}`);
+  const memo = await getMemo(env, id);
 
   if (!memo || (memo.visibility === "private" && !locals.user)) {
     error(404, "Memo not found.");

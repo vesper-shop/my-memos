@@ -1,0 +1,122 @@
+[
+  {
+    "name": "twitter",
+    "kind": "channel",
+    "description": "The memo was also posted on Twitter"
+  },
+  {
+    "name": "ai",
+    "kind": "topic",
+    "description": "artificial intelligence, AI models, agents or vibe coding"
+  },
+  {
+    "name": "工作",
+    "kind": "topic",
+    "description": "jobs, internships, interviews or the workplace"
+  },
+  {
+    "name": "成长",
+    "kind": "topic",
+    "description": "growing up, childhood, education or personal growth"
+  },
+  {
+    "name": "旅行",
+    "kind": "topic",
+    "description": "travel or trips"
+  },
+  {
+    "name": "比赛",
+    "kind": "topic",
+    "description": "hackathons, competitions or demo days"
+  },
+  {
+    "name": "理财",
+    "kind": "topic",
+    "description": "money, banking, subscriptions or taxes"
+  },
+  {
+    "name": "申研",
+    "kind": "topic",
+    "description": "applying to graduate school"
+  },
+  {
+    "name": "社交",
+    "kind": "topic",
+    "description": "social media, followers, or relationships with other people"
+  },
+  {
+    "name": "绘图",
+    "kind": "topic",
+    "description": "an image-generation or photo-editing prompt"
+  },
+  {
+    "name": "美食",
+    "kind": "topic",
+    "description": "food, cooking, coffee or restaurants"
+  },
+  {
+    "name": "英国",
+    "kind": "topic",
+    "description": "life in the United Kingdom"
+  },
+  {
+    "name": "角色",
+    "kind": "topic",
+    "description": "a role-play persona prompt"
+  },
+  {
+    "name": "emo",
+    "kind": "type",
+    "description": "Sadness, loneliness or low mood"
+  },
+  {
+    "name": "备忘",
+    "kind": "type",
+    "description": "Reference material kept for later: facts, commands, links, comparisons"
+  },
+  {
+    "name": "学业",
+    "kind": "type",
+    "description": "University study: courses, exams, revision, applications, thesis"
+  },
+  {
+    "name": "开发",
+    "kind": "type",
+    "description": "Software development notes: project ideas, bugs, technical designs"
+  },
+  {
+    "name": "待办",
+    "kind": "type",
+    "description": "A to-do list, checklist or plan of things to do"
+  },
+  {
+    "name": "思考",
+    "kind": "type",
+    "description": "A reflection, opinion or line of reasoning about life, people or society"
+  },
+  {
+    "name": "愿望",
+    "kind": "type",
+    "description": "A wish list, or something the author wants to have or do"
+  },
+  {
+    "name": "抱怨",
+    "kind": "type",
+    "description": "A rant or complaint about something annoying"
+  },
+  {
+    "name": "提示词",
+    "kind": "type",
+    "description": "A prompt written for an AI model"
+  },
+  {
+    "name": "摘录",
+    "kind": "type",
+    "description": "A quotation or excerpt written by someone else"
+  },
+  {
+    "name": "日常",
+    "kind": "type",
+    "description": "A light observation or small moment from everyday life"
+  }
+]

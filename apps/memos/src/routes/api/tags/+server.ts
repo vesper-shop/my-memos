@@ -11,5 +11,5 @@ export const GET: RequestHandler = async ({ request, locals }) => {
     );
   }
 
-  return Response.json({ tags: await listTagCounts(env.DB) });
+  return Response.json({ tags: await listTagCounts(env) });
 };

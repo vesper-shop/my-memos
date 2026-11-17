@@ -2,7 +2,7 @@ import env from "#env";
 import type { RequestHandler } from "./$types";
 
 export const GET: RequestHandler = () => {
-  const origin = env.BETTER_AUTH_URL;
+  const origin = env.SITE_URL;
   return Response.json(
     {
       linkset: [

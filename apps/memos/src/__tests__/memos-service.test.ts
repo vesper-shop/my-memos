@@ -1,117 +1,69 @@
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { invalidateMemoOgCache } from "#lib/server/memos/cache.ts";
-import { findMemoRow, listAgentMemoRecords, updateMemoRow } from "#lib/server/memos/repository.ts";
-import { searchAgentMemos, updateMemo } from "#lib/server/memos/service.ts";
-import { readMemoBody, writeMemoBody } from "#lib/server/memos/storage.ts";
+import { describe, expect, it } from "vite-plus/test";
+import { countTags, filterAgentMemos, queryMemos } from "#lib/server/memos/repository.ts";
+import { NO_MEMO_FILTERS } from "#lib/server/memos/types.ts";
+import type { Memo } from "#lib/types.ts";
 
-vi.mock("#lib/server/memos/cache.ts", () => ({
-  invalidateMemoOgCache: vi.fn(),
-}));
-
-vi.mock("#lib/server/memos/repository.ts", () => ({
-  deleteMemoRow: vi.fn(),
-  findMemoRow: vi.fn(),
-  insertMemoRow: vi.fn(),
-  listAgentMemoRecords: vi.fn(),
-  memoFromRow: vi.fn((row) => ({
-    id: row.id,
-    content: row.excerpt,
-    tags: row.tagsJson,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    visibility: row.visibility,
-    pinned: row.pinned,
-    favorite: row.favorite,
-    archived: row.archived,
-  })),
-  queryTagCounts: vi.fn(),
-  updateMemoRow: vi.fn(),
-}));
-
-vi.mock("#lib/server/memos/storage.ts", () => ({
-  deleteMemoBody: vi.fn(),
-  readMemoBody: vi.fn(),
-  writeMemoBody: vi.fn(),
-}));
-
-const memoRow = {
-  id: "20260803T000000Z-12345678",
-  r2Key: "memos/2026/08/memo.md",
-  tagsJson: ["old"],
-  excerpt: "Body\n\n#old",
-  createdAt: "2026-08-03T00:00:00.000Z",
-  updatedAt: "2026-08-03T00:00:00.000Z",
-  visibility: "private" as const,
+const memo = (id: number, day: string, extra: Partial<Memo> = {}): Memo => ({
+  id: `00000000-0000-4000-8000-00000000000${id}`,
+  content: `memo ${id}`,
+  tags: [],
+  createdAt: `${day}T12:00:00.000Z`,
+  updatedAt: `${day}T12:00:00.000Z`,
+  visibility: "public",
   pinned: false,
   favorite: false,
   archived: false,
-};
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  vi.mocked(findMemoRow).mockResolvedValue(memoRow);
-  vi.mocked(readMemoBody).mockResolvedValue("Body\n\n#old");
-  vi.mocked(updateMemoRow).mockResolvedValue({
-    ...memoRow,
-    excerpt: "Body\n\n#new",
-    tagsJson: ["new"],
-  });
+  ...extra,
 });
 
-describe("memo service", () => {
-  it("keeps the R2 body and D1 mirror synchronized for tag-only updates", async () => {
-    const memo = await updateMemo({} as D1Database, {} as R2Bucket, {} as KVNamespace, memoRow.id, {
-      tags: ["new"],
-    });
+const memos = [
+  memo(1, "2026-01-01", { tags: ["Life"] }),
+  memo(2, "2026-02-01", { pinned: true }),
+  memo(3, "2026-03-01", { visibility: "private", tags: ["life", "code"], content: "Bridge" }),
+  memo(4, "2026-04-01", { archived: true, favorite: true }),
+];
 
-    expect(writeMemoBody).toHaveBeenCalledWith(expect.anything(), memoRow.r2Key, "Body\n\n#new");
-    expect(updateMemoRow).toHaveBeenCalledWith(
-      expect.anything(),
-      memoRow.id,
-      expect.objectContaining({ excerpt: "Body\n\n#new", tagsJson: ["new"] }),
-    );
-    expect(invalidateMemoOgCache).toHaveBeenCalledWith(expect.anything(), memoRow.id);
-    expect(memo.tags).toEqual(["new"]);
+const NO_AGENT_FILTERS = { query: null, fromDate: null, toDate: null, tags: [], limit: 10 };
+const ids = (list: Memo[]) => list.map((item) => item.id.slice(-1));
+
+describe("memos read from Vesper", () => {
+  it("puts pinned memos first and pages with a cursor", () => {
+    const first = queryMemos(memos, { ...NO_MEMO_FILTERS, limit: 2 });
+    expect(ids(first.memos)).toEqual(["2", "3"]);
+    const second = queryMemos(memos, { ...NO_MEMO_FILTERS, limit: 2, cursor: first.nextCursor });
+    expect(ids(second.memos)).toEqual(["1"]);
+    expect(second.nextCursor).toBeNull();
   });
 
-  it("replaces only the closing hashtags of a tag-only update and keeps indentation", async () => {
-    vi.mocked(readMemoBody).mockResolvedValue("```\n│   indented  box\n```\n\n#old");
-
-    await updateMemo({} as D1Database, {} as R2Bucket, {} as KVNamespace, memoRow.id, {
-      tags: ["备忘", "ai"],
-    });
-
-    expect(writeMemoBody).toHaveBeenCalledWith(
-      expect.anything(),
-      memoRow.r2Key,
-      "```\n│   indented  box\n```\n\n#备忘 #ai",
-    );
-  });
-
-  it("loads canonical R2 bodies for agent search and falls back to the D1 mirror", async () => {
-    vi.mocked(listAgentMemoRecords).mockResolvedValue([
-      {
-        id: "one",
-        r2Key: "one.md",
-        excerpt: "mirror one",
-        tags: ["one"],
-        createdAt: "2026-08-03T00:00:00.000Z",
-      },
-      {
-        id: "two",
-        r2Key: "two.md",
-        excerpt: "mirror two",
-        tags: ["two"],
-        createdAt: "2026-08-02T00:00:00.000Z",
-      },
+  it("filters by shelf, visibility, tag, search and day", () => {
+    expect(ids(queryMemos(memos, { ...NO_MEMO_FILTERS, archivedOnly: true }).memos)).toEqual(["4"]);
+    expect(ids(queryMemos(memos, { ...NO_MEMO_FILTERS, publicOnly: true }).memos)).toEqual([
+      "2",
+      "1",
     ]);
-    vi.mocked(readMemoBody).mockResolvedValueOnce("canonical one").mockResolvedValueOnce(null);
+    expect(ids(queryMemos(memos, { ...NO_MEMO_FILTERS, tags: ["LIFE"] }).memos)).toEqual([
+      "3",
+      "1",
+    ]);
+    expect(ids(queryMemos(memos, { ...NO_MEMO_FILTERS, search: "bridge" }).memos)).toEqual(["3"]);
+    expect(ids(queryMemos(memos, { ...NO_MEMO_FILTERS, date: "2026-02-01" }).memos)).toEqual(["2"]);
+  });
 
-    const memos = await searchAgentMemos({} as D1Database, {} as R2Bucket, {
-      query: "memo",
-      limit: 10,
-    });
+  it("counts tags case-insensitively without archived memos", () => {
+    expect(countTags(memos)).toEqual([
+      { name: "life", count: 2 },
+      { name: "code", count: 1 },
+    ]);
+    expect(countTags(memos, true)).toEqual([{ name: "life", count: 1 }]);
+  });
 
-    expect(memos.map((memo) => memo.content)).toEqual(["canonical one", "mirror two"]);
+  it("needs every tag for agent searches", () => {
+    expect(ids(filterAgentMemos(memos, { ...NO_AGENT_FILTERS, tags: ["life", "code"] }))).toEqual([
+      "3",
+    ]);
+    expect(ids(filterAgentMemos(memos, { ...NO_AGENT_FILTERS, fromDate: "2026-02-01" }))).toEqual([
+      "3",
+      "2",
+    ]);
   });
 });

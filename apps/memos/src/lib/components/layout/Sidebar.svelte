@@ -230,11 +230,7 @@
         <PopoverTrigger
           class="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-accent shrink-0"
         >
-          <Avatar
-            src={page.data.user.image ?? undefined}
-            fallback={page.data.user.name}
-            size="sm"
-          />
+          <Avatar src={page.data.user.image} fallback={page.data.user.name} size="sm" />
         </PopoverTrigger>
       {:else}
         <PopoverTrigger
@@ -247,17 +243,18 @@
       <PopoverContent side="top" align="center" class="w-56">
         {#if page.data.user}
           <div class="flex flex-col items-center gap-3 py-1">
-            <Avatar
-              src={page.data.user.image ?? undefined}
-              fallback={page.data.user.name}
-              size="lg"
-            />
-            <div class="text-center">
+            <Avatar src={page.data.user.image} fallback={page.data.user.name} size="lg" />
+            <a
+              href={page.data.user.href}
+              target="_blank"
+              rel="noreferrer"
+              class="text-center hover:text-foreground"
+            >
               <p class="text-sm font-medium text-foreground">{page.data.user.name}</p>
               <p class="text-xs text-muted-foreground truncate max-w-45">
                 {page.data.user.email}
               </p>
-            </div>
+            </a>
             <Button
               variant="outline"
               size="sm"
@@ -272,13 +269,8 @@
           <div class="flex flex-col items-center gap-3 py-1">
             <Avatar size="lg" fallback="Guest" />
             <p class="text-sm text-muted-foreground">Not signed in</p>
-            <Button
-              size="sm"
-              class="w-full gap-2"
-              onclick={() =>
-                signIn.social({ provider: "you-find-me", callbackURL: page.url.pathname })}
-            >
-              Sign in with you-find.me
+            <Button size="sm" class="w-full gap-2" onclick={() => signIn(page.url.pathname)}>
+              Sign in with Vesper
             </Button>
           </div>
         {/if}

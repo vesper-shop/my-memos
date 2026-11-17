@@ -1,11 +1,10 @@
-import type { User, Session } from "better-auth";
+import type { Owner } from "#lib/server/owner.ts";
 import type { AppEnv } from "#lib/server/types.ts";
 
 declare global {
   namespace App {
     interface Locals {
-      user: User | null;
-      session: Session | null;
+      user: Owner | null;
     }
   }
 

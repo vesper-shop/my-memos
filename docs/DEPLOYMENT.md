@@ -1,6 +1,6 @@
 # Deployment
 
-This repository is deployed as a Cloudflare Worker backed by D1, KV, R2, and Durable Objects.
+This repository is deployed as a Cloudflare Worker backed by KV, R2 and Durable Objects. Memos live in Vesper.
 
 The runnable app is the SvelteKit project in [apps/memos](../apps/memos), built to Cloudflare output and served by the generated SvelteKit Worker entry. Cloudflare settings live in [apps/memos/void.config.ts](../apps/memos/void.config.ts). Void materializes `apps/memos/.void-wrangler.jsonc` from it whenever `voidPlugin()` loads or a `void` command needs Cloudflare config; the SvelteKit adapter reads that file. That generated file is gitignored. [apps/memos/void.lock.json](../apps/memos/void.lock.json) records the resolved resource IDs.
 
@@ -13,7 +13,6 @@ The runnable app is the SvelteKit project in [apps/memos](../apps/memos), built 
 - Public domain: `https://memos.you-find.me`
 - Workers.dev route: disabled via `workers_dev = false`
 - Static assets binding: `ASSETS`
-- Database: `D1` via binding `DB`
 - Cache: `KV` via binding `MEMOS_CACHE`
 - Object storage: `R2` via binding `MEMOS_BUCKET`
 - Workers AI: binding `AI`, inferred by Void from `void/ai` imports
@@ -22,37 +21,36 @@ The runnable app is the SvelteKit project in [apps/memos](../apps/memos), built 
 
 The current Worker expects these bindings to exist:
 
-| Binding        | Type       | Purpose                                               |
-| -------------- | ---------- | ----------------------------------------------------- |
-| `DB`           | D1         | Memo metadata, tag definitions and Better Auth tables |
-| `MEMOS_CACHE`  | KV         | Generated assets                                      |
-| `MEMOS_BUCKET` | R2         | Memo bodies and Agent files                           |
-| `ASSETS`       | Assets     | Built SvelteKit client assets                         |
-| `AI`           | Workers AI | Jev memo classification                               |
+| Binding        | Type       | Purpose                                       |
+| -------------- | ---------- | --------------------------------------------- |
+| `MEMOS_CACHE`  | KV         | Vesper grant, sessions, profile, tags, caches |
+| `MEMOS_BUCKET` | R2         | Agent files                                   |
+| `ASSETS`       | Assets     | Built SvelteKit client assets                 |
+| `AI`           | Workers AI | Jev memo classification                       |
 
-Current binding names and IDs live in the `cloudflare` field of [apps/memos/void.config.ts](../apps/memos/void.config.ts). Runtime TypeScript declarations live in [apps/memos/src/lib/server/types.ts](../apps/memos/src/lib/server/types.ts) (`AppEnv`), which [apps/memos/src/app.d.ts](../apps/memos/src/app.d.ts) merges into `Cloudflare.Env`. Server code reads bindings with `import { env } from "cloudflare:workers"`; SvelteKit 3 and `@sveltejs/adapter-cloudflare` 8 no longer provide `platform`. The adapter reads `./.void-wrangler.jsonc`. D1 migrations are hand-written SQL in `apps/memos/db/migrations`, applied by `void db migrate` and `void deploy`; the app does not use Void's Drizzle schema generation (`void db generate`).
+Current binding names and IDs live in the `cloudflare` field of [apps/memos/void.config.ts](../apps/memos/void.config.ts). Runtime TypeScript declarations live in [apps/memos/src/lib/server/types.ts](../apps/memos/src/lib/server/types.ts) (`AppEnv`), which [apps/memos/src/app.d.ts](../apps/memos/src/app.d.ts) merges into `Cloudflare.Env`. Server code reads bindings with `import { env } from "cloudflare:workers"`; SvelteKit 3 and `@sveltejs/adapter-cloudflare` 8 no longer provide `platform`. The adapter reads `./.void-wrangler.jsonc`.
 
 ## Required Environment Variables
 
 Configuration values are declared and validated in [apps/memos/env.ts](../apps/memos/env.ts) with `defineEnv` and read with `import { env } from "void/env"`. Bindings stay on `cloudflare:workers`. `void deploy` refuses to deploy while a required key is missing remotely, and the Worker validates every key at startup.
 
-| Variable             | Required            | Purpose                                             |
-| -------------------- | ------------------- | --------------------------------------------------- |
-| `BETTER_AUTH_URL`    | default in `env.ts` | Public base URL used by Better Auth                 |
-| `BETTER_AUTH_SECRET` | yes                 | Better Auth signing secret                          |
-| `CF_ACCOUNT_ID`      | default in `env.ts` | Cloudflare account containing the AI Gateway        |
-| `CF_AIG_TOKEN`       | yes                 | Authenticates the Gateway; it is not a provider key |
-| `TAVILY_API_KEY`     | yes                 | Tavily API key for web search                       |
+| Variable         | Required            | Purpose                                             |
+| ---------------- | ------------------- | --------------------------------------------------- |
+| `SITE_URL`       | default in `env.ts` | Public base URL for discovery documents             |
+| `CF_ACCOUNT_ID`  | default in `env.ts` | Cloudflare account containing the AI Gateway        |
+| `CF_AIG_TOKEN`   | yes                 | Authenticates the Gateway; it is not a provider key |
+| `TAVILY_API_KEY` | yes                 | Tavily API key for web search                       |
+| `VESPER_TOKEN`   | yes                 | Workspace API token used for all Vesper reads       |
 
 Local development reads the variables above from `apps/memos/.env`, the only local env file Void supports; Void refuses to start when `.env.example` or `.env.local` exist. Production builds switch Vite's `envDir` to `.void/build-env`, so local secrets are not copied into Worker vars. Production values are Worker secrets managed with `void secret`, not committed files or plaintext `vars`; keys with a default in `env.ts` need no secret. Run `pnpm --filter @my-memos/app exec void env check` to validate `.env`.
 
 ## External Access
 
-The external REST API and MCP endpoint accept access tokens issued by the you-find.me gateway.
-Tokens must carry the `https://memos.you-find.me` audience and the `memos:write` scope, which the
-gateway issues only to its owner. `/.well-known/oauth-protected-resource` names the gateway as the
-authorization server; MCP clients discover it from the `/api/mcp` challenge, register through dynamic
-client registration, and sign the owner in.
+Set `VESPER_TOKEN` to a workspace API token created in Vesper; pages read entries with it. Writing
+needs a one-time sign-in at `/auth/sign-in` after a deploy to a new KV namespace: the grant it stores
+is what create, edit and delete call Vesper with, and the workspace handle it records fills the
+header card. The external REST API and MCP endpoint accept Vesper access tokens for the same
+workspace.
 
 ## Build And Deployment Flow
 
@@ -71,19 +69,17 @@ What each step does:
 - `pnpm build`
   Builds `@my-memos/app` and writes Cloudflare output to `apps/memos/.svelte-kit/cloudflare`.
 - `pnpm deploy`
-  Runs `void deploy --platform cloudflare` from the `@my-memos/app` workspace, builds the SvelteKit framework target, applies pending `db/migrations` to the remote D1 database, and uploads its Worker and assets using the app-local configuration.
+  Runs `void deploy --platform cloudflare` from the `@my-memos/app` workspace, builds the SvelteKit framework target and uploads its Worker and assets using the app-local configuration.
 
 Pushes to `main` also deploy through Cloudflare Workers Builds. Its trigger runs `pnpm run build` and then `pnpm exec void deploy --platform cloudflare` from `/apps/memos`, authenticated by the build token that Workers Builds injects as `CLOUDFLARE_API_TOKEN`. `void deploy` builds with `inference.build` (`pnpm run build`, which runs `vp build`) because the workspace has no standalone `vite` binary for Void's default `vite build`. The deploy command is stored in the Cloudflare build trigger, not in this repository; plain `wrangler deploy` no longer works because the repository has no `wrangler.json`.
 
-`pnpm d1:migrate:remote` (`void db migrate --remote`) applies pending migrations without deploying code. Remote D1 records applied files in the `d1_migrations` table, so files already applied by Wrangler are not re-run. Before `void deploy` applies pending migrations, it saves a D1 Time Travel restore point and prints the matching `void db restore --platform cloudflare` command; deploy stops before migrating if it cannot save one.
-
 Secret changes are a separate operation, not part of every code deployment. Run `pnpm --filter @my-memos/app exec void secret put <NAME>`; on a direct Cloudflare target it stores an encrypted Worker secret. `void secret list` shows the names. `apps/memos/void.config.ts` is the source of truth for bindings; `apps/memos/env.ts` is the source of truth for configuration and secret names.
 
-`void db migrate --remote` and `void secret` read the deploy platform from the gitignored `apps/memos/.void/project.json`. On a new machine, run `pnpm --filter @my-memos/app exec void connect --platform cloudflare` once before using them.
+`void secret` reads the deploy platform from the gitignored `apps/memos/.void/project.json`. On a new machine, run `pnpm --filter @my-memos/app exec void connect --platform cloudflare` once before using them.
 
 Chat uses the custom-provider `gateway.ai.cloudflare.com/v1/{account}/default/custom-opencode/v1` endpoint with `deepseek-v4.1-flash`. Configure the `custom-opencode` provider with an upstream base URL that resolves `/v1/chat/completions`, then store its API key under the `default` Gateway's Provider Keys with the `default` alias. The Worker sends `cf-aig-authorization` and no upstream credentials; Cloudflare injects the stored provider key, so these calls use provider BYOK rather than Unified Billing. OpenCode requires `x-opencode-session` to route requests; the Worker sets it to the conversation's first user message ID, which stays stable across turns. The deprecated `/compat/chat/completions` endpoint and the Unified Billing REST endpoint are not used.
 
-A memo created without tags, either explicit or as hashtags in its body, is classified by Jev before it is saved, so Save returns the memo with its tags; a Jev failure fails the create. Jev runs as `typesafe/jev` on Workers AI through the `AI` binding and the `default` Gateway. The kinds come from the D1 `tag_definitions` table: all `type` tags form one `choice` question, each `topic` tag is one `noul` question built from its description, and `channel` tags such as `twitter` are never assigned. Only defined tags are candidates. At most two topics above 0.5 are kept, and the tags are appended to the body as hashtags. Jev only chooses among defined tags; add or change one with `PUT /api/tags/definitions/{name}`.
+A memo created without tags, either explicit or as hashtags in its body, is classified by Jev before it is saved, so Save returns the memo with its tags; a Jev failure fails the create. Jev runs as `typesafe/jev` on Workers AI through the `AI` binding and the `default` Gateway. The kinds come from the tag definitions in KV, seeded from `apps/memos/src/lib/server/tags/definitions.json`: all `type` tags form one `choice` question, each `topic` tag is one `noul` question built from its description, and `channel` tags such as `twitter` are never assigned. Only defined tags are candidates. At most two topics above 0.5 are kept, and the tags are appended to the body as hashtags. Jev only chooses among defined tags; add or change one with `PUT /api/tags/definitions/{name}`.
 
 `apps/memos/vite.config.ts` targets `webworker` for SSR and resolves `workerd` before the `node` fallback. This selects the MCP client's Worker-specific validator shim while preserving Node-only export fallbacks used by transitive dependencies. Removing `workerd` makes Rolldown select the MCP Node validator and emit a top-level `createRequire`, which Cloudflare rejects during version validation; adding `browser` selects browser code that reads `window` when the Worker loads.
 
@@ -93,53 +89,18 @@ Useful commands from repo root:
 
 ```bash
 pnpm dev
-pnpm d1:migrate:local
 pnpm lint
 pnpm check
 ```
 
 - `pnpm dev`
-  Starts the app workspace with `vp dev`; `voidPlugin()` proxies D1, KV, and R2 calls to the configured remote Cloudflare resources because each binding has `remote: true`. Local development can therefore read and mutate production data.
-- `pnpm d1:migrate:local`
-  Runs `void db migrate` against app-local D1 state under `apps/memos/.wrangler/state`, tracked in its `_void_migrations` table. It does not migrate the remote D1 database used by `pnpm dev`.
+  Starts the app workspace with `vp dev`; `voidPlugin()` proxies KV and R2 calls to the configured remote Cloudflare resources because each binding has `remote: true`. Local development can therefore read and mutate production data.
 - `pnpm lint`
   Runs oxlint across the workspace.
 - `pnpm format`
   Formats source files with oxfmt.
 - `pnpm check`
   Runs format check, lint, and type checking.
-
-## Data And Auth Migration Notes
-
-The app relies on these migration groups:
-
-- [apps/memos/db/migrations/0001_create_memos.sql](../apps/memos/db/migrations/0001_create_memos.sql)
-  Creates the `memos` table and indexes.
-- [apps/memos/db/migrations/0002_auth_tables.sql](../apps/memos/db/migrations/0002_auth_tables.sql)
-  Creates Better Auth tables: `user`, `session`, `account`, `verification`.
-- `apps/memos/db/migrations/0003_add_memo_favorite.sql`
-  Adds the memo favorite flag and its filtered-list index.
-- `apps/memos/db/migrations/0004_create_tag_definitions.sql`
-  Creates `tag_definitions` and seeds the type, topic and channel tags used by Jev.
-
-Run migrations before the first deployment and whenever schema changes are introduced.
-
-### Adding a New Schema Change
-
-The numbered SQL files in `apps/memos/db/migrations` are the source of truth. The workflow is:
-
-```bash
-# create a numbered SQL file in apps/memos/db/migrations/
-pnpm d1:migrate:local    # verify locally
-pnpm d1:migrate:remote   # apply to production, or let pnpm deploy apply it
-```
-
-Void rejects destructive statements (`DROP`, column renames, unbounded `UPDATE`/`DELETE`, and similar) unless the file contains a standalone `-- void:allow-destructive` line.
-
-When a migration changes the memo schema, update the Drizzle schema mirror in
-`apps/memos/src/lib/server/db/schema.ts` in the same change. Do not run
-`void db generate` or commit Drizzle snapshots or `meta/_journal.json` beside these files;
-that switches Void to journal-checked Drizzle migrations and can attempt to recreate existing tables.
 
 ## Post-Deployment Checks
 
@@ -163,7 +124,7 @@ Verify these paths after deployment:
   Authenticated POST imports a public X/Twitter status through `api.fxtwitter.com` and creates a
   favorite memo. No X API credentials are configured.
 - `/api/chat`
-  Stateless pi Agent NDJSON stream backed by Cloudflare AI Gateway, MCP, D1, and R2.
+  Stateless pi Agent NDJSON stream backed by Cloudflare AI Gateway, MCP, Vesper and R2.
 - `/api/mcp`
   Send either a modern `server/discover` request with MCP `2026-07-28` or a legacy `2025-11-25` `initialize` request, then list and call memo tools with the generated Bearer key. External discovery must contain only the six memo-domain operations. The legacy path is stateless: it does not issue `Mcp-Session-Id`, and supplied session IDs are rejected.
 - `/api/memos`
@@ -192,10 +153,10 @@ Some clients name the transport `http` instead of `streamable-http`; the URL is 
 
 ## Operational Notes
 
-- R2 is canonical for memo bodies. The current D1 `excerpt` field mirrors the trimmed body for list rendering and search. Memo lists and tag counts are queried from D1; KV contains only disposable generated-asset caches, so deleting KV entries must not lose source data.
-- X post import depends on outbound HTTPS access to the public FxTwitter API. The integration sends only the numeric post ID and a descriptive user agent; it requires no secret or Cloudflare binding. Imported photos remain external and are stored as Markdown links in the memo body; image bytes are not proxied or copied to R2. FxTwitter failures leave D1 and R2 unchanged.
+- Vesper is canonical for memos. Lists come from one cached read of every memo (60 s in KV), so a cold cache costs one Vesper request per 50 memos.
+- X post import depends on outbound HTTPS access to the public FxTwitter API. The integration sends only the numeric post ID and a descriptive user agent; it requires no secret or Cloudflare binding. Imported photos remain external and are stored as Markdown links in the memo body; image bytes are not proxied or copied to R2. FxTwitter failures create no memo.
 - The chat route reads `agent/PROMPT.md` and `agent/MEMORY.md` from `MEMOS_BUCKET`. Missing files degrade gracefully, but chat behavior will change.
-- Chat runs as a streaming HTTP invocation, not a Queue consumer. This deployment intentionally leaves `limits.cpu_ms` unset because it targets Workers Free, whose CPU ceiling is 10 ms per invocation; the 30-second default and configurable 5-minute maximum belong to Workers Paid. Model, R2, D1, and MCP I/O wait time does not consume CPU time, and the response stream keeps the HTTP invocation alive while the client remains connected.
+- Chat runs as a streaming HTTP invocation, not a Queue consumer. This deployment intentionally leaves `limits.cpu_ms` unset because it targets Workers Free, whose CPU ceiling is 10 ms per invocation; the 30-second default and configurable 5-minute maximum belong to Workers Paid. Model, Vesper, R2 and MCP I/O wait time does not consume CPU time, and the response stream keeps the HTTP invocation alive while the client remains connected.
 - Memory changes only when the agent calls `update_memory`. An R2 ETag conflict fails that tool call, not the chat response.
-- Local development uses remote bindings for D1, KV, and R2 and can mutate the configured Cloudflare resources. The explicit `pnpm d1:migrate:local` command still targets app-local state under `apps/memos/.wrangler/state`. That state still holds Wrangler's `d1_migrations` records rather than `_void_migrations`; if `pnpm d1:migrate:local` fails on an already-applied file, run `void db reset` in `apps/memos` to rebuild the local database.
+- Local development uses the remote KV and R2 bindings and the same Vesper token and grant, so it reads and writes production memos.
 - `apps/memos/void.config.ts` currently includes concrete IDs and a production URL. Keep its `cloudflare` bindings aligned with `apps/memos/src/app.d.ts`, and avoid mixing environments in one config unless you add explicit environment sections.

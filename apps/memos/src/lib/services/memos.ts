@@ -3,7 +3,6 @@ import { z } from "zod";
 
 export const memoSchema = z.object({
   id: z.string(),
-  r2Key: z.string(),
   content: z.string(),
   tags: z.array(z.string()),
   createdAt: z.string(),
