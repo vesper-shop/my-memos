@@ -1,3 +1,4 @@
+import { waitUntil } from "cloudflare:workers";
 import { z } from "zod";
 import type { AppEnv } from "#lib/server/types.ts";
 import { vesperFetch } from "#lib/server/vesper.ts";
@@ -12,7 +13,7 @@ import type {
 } from "./types";
 
 const CACHE_KEY = "vesper:memos";
-const CACHE_TTL = 60;
+const FRESH_MS = 60_000;
 const CURSOR_VALUE_SEPARATOR = "|";
 const ID_RE = /^[0-9a-f-]{36}$/;
 const SORT_VALUE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -65,16 +66,24 @@ async function fetchShelf(env: AppEnv, shelf: "all" | "archive") {
   return memos;
 }
 
-export async function loadMemos(env: AppEnv): Promise<Memo[]> {
-  const cached = await env.MEMOS_CACHE.get<Memo[]>(CACHE_KEY, "json");
-  if (cached) return cached;
+async function refreshMemos(env: AppEnv) {
   const [active, archived] = await Promise.all([
     fetchShelf(env, "all"),
     fetchShelf(env, "archive"),
   ]);
   const memos = [...new Map([...active, ...archived].map((memo) => [memo.id, memo])).values()];
-  await env.MEMOS_CACHE.put(CACHE_KEY, JSON.stringify(memos), { expirationTtl: CACHE_TTL });
+  await env.MEMOS_CACHE.put(CACHE_KEY, JSON.stringify(memos), { metadata: { at: Date.now() } });
   return memos;
+}
+
+export async function loadMemos(env: AppEnv): Promise<Memo[]> {
+  const { value, metadata } = await env.MEMOS_CACHE.getWithMetadata<Memo[], { at: number }>(
+    CACHE_KEY,
+    "json",
+  );
+  if (value === null) return refreshMemos(env);
+  if (metadata === null || Date.now() - metadata.at > FRESH_MS) waitUntil(refreshMemos(env));
+  return value;
 }
 
 export const forgetMemos = (env: AppEnv) => env.MEMOS_CACHE.delete(CACHE_KEY);
@@ -143,12 +152,8 @@ export async function listPublicMemos(env: AppEnv, limit: number): Promise<Memo[
     .slice(0, limit);
 }
 
-export async function listMemoActivity(
-  env: AppEnv,
-  publicOnly: boolean,
-  since: string,
-): Promise<Memo[]> {
-  return live(await loadMemos(env), publicOnly)
+export function listMemoActivity(memos: Memo[], publicOnly: boolean, since: string): Memo[] {
+  return live(memos, publicOnly)
     .filter((memo) => memo.createdAt >= since)
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
@@ -162,19 +167,11 @@ export function countTags(memos: Memo[], publicOnly = false): TagCount[] {
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
-export async function queryTagCounts(env: AppEnv, publicOnly = false): Promise<TagCount[]> {
-  return countTags(await loadMemos(env), publicOnly);
-}
-
-export async function countMemoStats(
-  env: AppEnv,
-  today: string,
-  publicOnly = false,
-): Promise<MemoStats> {
-  const memos = live(await loadMemos(env), publicOnly);
+export function countMemoStats(memos: Memo[], today: string, publicOnly: boolean): MemoStats {
+  const shown = live(memos, publicOnly);
   return {
-    total: memos.length,
-    today: memos.filter((memo) => sameDay(memo.createdAt, today)).length,
+    total: shown.length,
+    today: shown.filter((memo) => sameDay(memo.createdAt, today)).length,
   };
 }
 

@@ -3,9 +3,9 @@ import { error, redirect } from "@sveltejs/kit";
 import {
   isMemoSearchWithinLimit,
   isValidMemoDate,
-  listMemos,
-  listTagCounts,
+  loadMemos,
   NO_MEMO_FILTERS,
+  queryMemos,
 } from "#lib/server/memos/index.ts";
 import { parsePageFilters } from "#lib/server/filters.ts";
 import type { PageServerLoad } from "./$types";
@@ -25,21 +25,13 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     error(400, "Invalid date filter.");
   }
 
-  const [{ memos, nextCursor }, tagCounts] = await Promise.all([
-    listMemos(env, {
-      ...NO_MEMO_FILTERS,
-      archivedOnly: true,
-      date: filters.date || null,
-      tags: filters.tags,
-      limit: PAGE_LIMIT,
-    }),
-    listTagCounts(env),
-  ]);
+  const { memos, nextCursor } = queryMemos(await loadMemos(env), {
+    ...NO_MEMO_FILTERS,
+    archivedOnly: true,
+    date: filters.date || null,
+    tags: filters.tags,
+    limit: PAGE_LIMIT,
+  });
 
-  return {
-    memos,
-    nextCursor,
-    tags: tagCounts,
-    filters,
-  };
+  return { memos, nextCursor, filters };
 };

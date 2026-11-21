@@ -1,12 +1,13 @@
 import { env } from "cloudflare:workers";
 import {
   countMemoStats,
+  countTags,
   isMemoSearchWithinLimit,
   isValidMemoDate,
   listMemoActivity,
-  listMemos,
-  listTagCounts,
+  loadMemos,
   NO_MEMO_FILTERS,
+  queryMemos,
 } from "#lib/server/memos/index.ts";
 import { parsePageFilters } from "#lib/server/filters.ts";
 import { error } from "@sveltejs/kit";
@@ -44,27 +45,23 @@ export const load: PageServerLoad = async ({ url, locals, setHeaders }) => {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  const [{ memos, nextCursor }, tagCounts, memoStats, activityMemos] = await Promise.all([
-    listMemos(env, {
-      ...NO_MEMO_FILTERS,
-      search: filters.search || null,
-      date: filters.date || null,
-      tags: filters.tags,
-      publicOnly,
-      sortByUpdated,
-      limit: PAGE_LIMIT,
-    }),
-    listTagCounts(env, publicOnly),
-    countMemoStats(env, today, publicOnly),
-    listMemoActivity(env, publicOnly, activitySince()),
-  ]);
+  const all = await loadMemos(env);
+  const { memos, nextCursor } = queryMemos(all, {
+    ...NO_MEMO_FILTERS,
+    search: filters.search || null,
+    date: filters.date || null,
+    tags: filters.tags,
+    publicOnly,
+    sortByUpdated,
+    limit: PAGE_LIMIT,
+  });
 
   return {
     memos,
     nextCursor,
-    activityMemos,
-    memoStats,
-    tags: tagCounts,
+    activityMemos: listMemoActivity(all, publicOnly, activitySince()),
+    memoStats: countMemoStats(all, today, publicOnly),
+    tags: countTags(all, publicOnly),
     filters,
   };
 };

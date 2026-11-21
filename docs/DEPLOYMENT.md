@@ -21,12 +21,11 @@ The runnable app is the SvelteKit project in [apps/memos](../apps/memos), built 
 
 The current Worker expects these bindings to exist:
 
-| Binding        | Type       | Purpose                         |
-| -------------- | ---------- | ------------------------------- |
-| `MEMOS_CACHE`  | KV         | Sessions, profile, tags, caches |
-| `MEMOS_BUCKET` | R2         | Agent files                     |
-| `ASSETS`       | Assets     | Built SvelteKit client assets   |
-| `AI`           | Workers AI | Jev memo classification         |
+| Binding        | Type   | Purpose                         |
+| -------------- | ------ | ------------------------------- |
+| `MEMOS_CACHE`  | KV     | Sessions, profile, tags, caches |
+| `MEMOS_BUCKET` | R2     | Agent files                     |
+| `ASSETS`       | Assets | Built SvelteKit client assets   |
 
 Current binding names and IDs live in the `cloudflare` field of [apps/memos/void.config.ts](../apps/memos/void.config.ts). Runtime TypeScript declarations live in [apps/memos/src/lib/server/types.ts](../apps/memos/src/lib/server/types.ts) (`AppEnv`), which [apps/memos/src/app.d.ts](../apps/memos/src/app.d.ts) merges into `Cloudflare.Env`. Server code reads bindings with `import { env } from "cloudflare:workers"`; SvelteKit 3 and `@sveltejs/adapter-cloudflare` 8 no longer provide `platform`. The adapter reads `./.void-wrangler.jsonc`.
 
@@ -78,8 +77,6 @@ Secret changes are a separate operation, not part of every code deployment. Run 
 
 Chat uses the custom-provider `gateway.ai.cloudflare.com/v1/{account}/default/custom-opencode/v1` endpoint with `deepseek-v4.1-flash`. Configure the `custom-opencode` provider with an upstream base URL that resolves `/v1/chat/completions`, then store its API key under the `default` Gateway's Provider Keys with the `default` alias. The Worker sends `cf-aig-authorization` and no upstream credentials; Cloudflare injects the stored provider key, so these calls use provider BYOK rather than Unified Billing. OpenCode requires `x-opencode-session` to route requests; the Worker sets it to the conversation's first user message ID, which stays stable across turns. The deprecated `/compat/chat/completions` endpoint and the Unified Billing REST endpoint are not used.
 
-A memo created without tags, either explicit or as hashtags in its body, is classified by Jev before it is saved, so Save returns the memo with its tags; a Jev failure fails the create. Jev runs as `typesafe/jev` on Workers AI through the `AI` binding and the `default` Gateway. The kinds come from the tag definitions in KV, seeded from `apps/memos/src/lib/server/tags/definitions.json`: all `type` tags form one `choice` question, each `topic` tag is one `noul` question built from its description, and `channel` tags such as `twitter` are never assigned. Only defined tags are candidates. At most two topics above 0.5 are kept, and the tags are appended to the body as hashtags. Jev only chooses among defined tags; add or change one with `PUT /api/tags/definitions/{name}`.
-
 `apps/memos/vite.config.ts` targets `webworker` for SSR and resolves `workerd` before the `node` fallback. This selects the MCP client's Worker-specific validator shim while preserving Node-only export fallbacks used by transitive dependencies. Removing `workerd` makes Rolldown select the MCP Node validator and emit a top-level `createRequire`, which Cloudflare rejects during version validation; adding `browser` selects browser code that reads `window` when the Worker loads.
 
 ## Local Development
@@ -113,7 +110,7 @@ Verify these paths after deployment:
 - `/archive`
   Redirects unauthenticated users to `/`; there is no standalone `/login` route.
 - `/favorites`
-  Requires authentication, supports the shared new/classic layout preference, lists non-archived
+  Requires authentication, lists non-archived
   favorite memos, and contains the X/Twitter import form.
 - `/chat`
   Requires an authenticated session and working AI bindings.
@@ -152,7 +149,7 @@ Some clients name the transport `http` instead of `streamable-http`; the URL is 
 
 ## Operational Notes
 
-- Vesper is canonical for memos. Lists come from one cached read of every memo (60 s in KV), so a cold cache costs one Vesper request per 50 memos.
+- Vesper is canonical for memos. Lists come from one cached read of every memo in KV. The copy never expires: after 60 s the next request still gets it and refreshes it in the background, and a write through this site drops it, so only an empty cache waits for Vesper (one request per 50 memos).
 - X post import depends on outbound HTTPS access to the public FxTwitter API. The integration sends only the numeric post ID and a descriptive user agent; it requires no secret or Cloudflare binding. Imported photos remain external and are stored as Markdown links in the memo body; image bytes are not proxied or copied to R2. FxTwitter failures create no memo.
 - The chat route reads `agent/PROMPT.md` and `agent/MEMORY.md` from `MEMOS_BUCKET`. Missing files degrade gracefully, but chat behavior will change.
 - Chat runs as a streaming HTTP invocation, not a Queue consumer. This deployment intentionally leaves `limits.cpu_ms` unset because it targets Workers Free, whose CPU ceiling is 10 ms per invocation; the 30-second default and configurable 5-minute maximum belong to Workers Paid. Model, Vesper, R2 and MCP I/O wait time does not consume CPU time, and the response stream keeps the HTTP invocation alive while the client remains connected.

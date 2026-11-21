@@ -25,7 +25,7 @@ Browser (in-memory Svelte Chat store)
   -> Vesper API (memos are Vesper entries without photos)
   -> Cloudflare bindings
      - R2: agent memory files
-     - KV: owner sessions, profile, tag definitions and derived caches
+     - KV: owner sessions, profile and derived caches
 ```
 
 ## Workspace Structure
@@ -46,19 +46,14 @@ Key areas:
     Vesper reads and writes with the `VESPER_TOKEN` secret, and owner sign-in.
   - `apps/memos/src/lib/server/memos`
     Memo domain: the repository reads Vesper entries into memos and filters them in memory; the
-    service writes through the Vesper API; `legacy-ids.json` maps pre-Vesper memo ids to entry ids.
-  - `apps/memos/src/lib/server/tags`
-    Tag definitions in KV (seeded from `definitions.json`) and Jev classification; `createMemo`
-    uses it to tag untagged memos.
+    service writes through the Vesper API.
   - `apps/memos/src/lib/server/x-import.ts`
     Validates X/Twitter status URLs and the FxTwitter response fields used by the import route.
   - `apps/memos/src/lib/server/mcp`
     MCP server, authentication, schemas, structured errors, typed domain operations, and MCP-only utilities. Shared contracts live in `types.ts`; implementation files import them instead of redeclaring local aliases.
 - [apps/memos/src/lib/components](../apps/memos/src/lib/components)
   App-specific Svelte UI not exported as reusable package components.
-  Contains two layout generations:
-  - `views/` — default `Home`, `Chat`, and `Archive` views using the masthead-based layout and timeline feed.
-  - `views-legacy/` — classic views kept for comparison via the in-page toggle; these use `AppShell` + `Sidebar` where applicable.
+  `views/` holds the `Home`, `Chat`, `Archive` and `Favorites` views, built on the masthead layout and timeline feed.
 
 ### Package: `packages/ui`
 
@@ -117,7 +112,7 @@ neutralized.
 ### Archive Page
 
 - `/archive` is authenticated only.
-- Loads archived memos and tag counts.
+- Loads archived memos.
 
 Route loader: [apps/memos/src/routes/archive/+page.server.ts](../apps/memos/src/routes/archive/+page.server.ts)
 
@@ -125,8 +120,7 @@ Route loader: [apps/memos/src/routes/archive/+page.server.ts](../apps/memos/src/
 
 - `/favorites` is authenticated only.
 - Lists non-archived memos whose `favorite` flag is set.
-- Uses the same month-grouped new layout and classic card-based legacy layout as `/archive`,
-  selected through the shared `my-memos:layout` preference.
+- Uses the same month-grouped layout as `/archive`.
 - Owns the X/Twitter import form. Imported posts are created as favorite memos so they appear in
   the current list after invalidation; the home page does not expose this form.
 
@@ -158,11 +152,11 @@ Memos live in Vesper as entries without photos; this site keeps no copy. The rep
 `all` and `archive` shelves from `/api/entries/documents`, turns each entry into a memo (its tags
 appended as the closing hashtag line) and caches the list in KV for 60 seconds. Lists, statistics,
 tag counts and Agent searches filter that list in memory. Creating, editing and deleting call
-Vesper's entries API and drop the cached list. Old `/memo/{id}` links with pre-Vesper ids redirect
-to the entry id.
+Vesper's entries API and drop the cached list. Vesper tags new untagged memos itself when auto-tag
+is on in its settings.
 
 R2 keeps only `agent/PROMPT.md` and `agent/MEMORY.md`. KV keeps the Vesper client and
-profile, owner sessions, tag definitions, the memo list cache and generated Open Graph images.
+profile, owner sessions, the memo list cache and generated Open Graph images.
 
 ## Server Domain Logic
 
@@ -248,13 +242,10 @@ only:
 
 - `GET /api/memos` returns `{ memos, nextCursor }` and supports cursor, limit, search, date,
   tags, public, archive, favorite, and updated-time filters.
-- `POST /api/memos` creates a memo. `createMemo` asks Jev for tags when a memo has none, before it
-  is saved (see [DEPLOYMENT.md](./DEPLOYMENT.md#build-and-deployment-flow)).
+- `POST /api/memos` creates a memo.
 - `GET`, `PATCH`, and `DELETE /api/memos/[id]` read, update, and delete one memo; reads return
   `{ memo }`.
 - `GET /api/tags` returns tag counts.
-- `GET /api/tags/definitions` lists tag definitions; `PUT` and `DELETE
-  /api/tags/definitions/[name]` upsert and delete one.
 
 The OpenAPI 3.1 description is a static asset at
 [apps/memos/static/api/openapi.json](../apps/memos/static/api/openapi.json); update it with
@@ -271,7 +262,7 @@ parallel.
 
 ## Type Boundaries
 
-The runtime contract for Cloudflare bindings is `AppEnv` in [apps/memos/src/lib/server/types.ts](../apps/memos/src/lib/server/types.ts), merged into `Cloudflare.Env` by [apps/memos/src/app.d.ts](../apps/memos/src/app.d.ts) for `import { env } from "cloudflare:workers"`. The `AI` binding is typed by `void/env` and inferred from `void/ai` imports. Configuration and secrets are typed from [apps/memos/env.ts](../apps/memos/env.ts) through the generated `.void/env.d.ts` and read with `import { env } from "void/env"`. Keep them in sync with:
+The runtime contract for Cloudflare bindings is `AppEnv` in [apps/memos/src/lib/server/types.ts](../apps/memos/src/lib/server/types.ts), merged into `Cloudflare.Env` by [apps/memos/src/app.d.ts](../apps/memos/src/app.d.ts) for `import { env } from "cloudflare:workers"`. Configuration and secrets are typed from [apps/memos/env.ts](../apps/memos/env.ts) through the generated `.void/env.d.ts` and read with `import { env } from "void/env"`. Keep them in sync with:
 
 - `apps/memos/void.config.ts` for bindings
 - `apps/memos/env.ts` for configuration and secrets

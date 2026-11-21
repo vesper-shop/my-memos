@@ -4,15 +4,17 @@ export {
   getMemo,
   listAgentMemos,
   listTagCounts,
-  searchAgentMemos,
   updateMemo,
 } from "./service";
 export {
-  listMemos,
-  listMemoActivity,
-  listPublicMemos,
   countMemoStats,
+  countTags,
   isValidMemoCursor,
+  listMemoActivity,
+  listMemos,
+  listPublicMemos,
+  loadMemos,
+  queryMemos,
 } from "./repository";
 export {
   MAX_MEMO_SEARCH_BYTES,

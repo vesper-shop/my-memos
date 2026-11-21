@@ -10,7 +10,6 @@ import {
   listTagCounts,
   memoDateSchema,
   memoSearchSchema,
-  searchAgentMemos,
   updateMemo,
 } from "#lib/server/memos/index.ts";
 import { renderChartSchema } from "#lib/visual/chart.ts";
@@ -81,7 +80,7 @@ export function createDomainOperations(env: AppEnv): DomainOperation[] {
         tags: z.array(z.string()).default([]),
       }),
       execute: async ({ query, fromDate, toDate, tags }) => {
-        const memoResults = await searchAgentMemos(env, {
+        const memoResults = await listAgentMemos(env, {
           query,
           fromDate,
           toDate,

@@ -18,7 +18,7 @@ This file is the entrypoint for agents and maintainers working in this repositor
 - Prefer root-level commands from [package.json](/Users/pleasure1234/Github/my-memos/package.json:1).
 - Run `pnpm` commands that touch the registry or run project checks outside the sandbox with approval to avoid sandbox-related hangs and timeouts.
 - Keep Cloudflare binding changes synchronized across [apps/memos/void.config.ts](/Users/pleasure1234/Github/my-memos/apps/memos/void.config.ts:1), [apps/memos/src/app.d.ts](/Users/pleasure1234/Github/my-memos/apps/memos/src/app.d.ts:1), and the docs above.
-- Memos live in Vesper; read and write them through `lib/server/memos`. `R2` holds only Agent files and `KV` the Vesper grant, sessions, tag definitions and caches.
+- Memos live in Vesper; read and write them through `lib/server/memos`. `R2` holds only Agent files and `KV` the Vesper grant, sessions and caches.
 - Reuse `packages/ui` for generic UI primitives; keep route-specific composition in `apps/memos`.
 - Do not overwrite or revert unrelated local changes unless explicitly asked.
 

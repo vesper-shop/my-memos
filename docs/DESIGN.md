@@ -142,7 +142,7 @@ Easing: prefer `ease-out` for entrances, `ease-in` for exits. Never use linear f
 
 Dark mode is triggered by a `.dark` class on `<html>`. Use `applyTheme(dark)` from `@my-memos/ui` to toggle it — it suppresses transitions during the switch to avoid a flash.
 
-`app.html` contains a small inline script that applies the correct theme before first paint, based on `localStorage` preference or system preference. `Masthead` owns the toggle in the default views; `AppShell` and `Sidebar` own it in the classic views. Both persist the same `my-memos:theme` preference.
+`app.html` contains a small inline script that applies the correct theme before first paint, based on `localStorage` preference or system preference. `Masthead` owns the toggle and persists the `my-memos:theme` preference.
 
 ## Usage
 

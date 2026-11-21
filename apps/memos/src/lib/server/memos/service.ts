@@ -1,10 +1,9 @@
 import { z } from "zod";
-import { classifyMemo, listTagDefinitions } from "#lib/server/tags/index.ts";
 import type { AppEnv } from "#lib/server/types.ts";
 import { vesperFetch } from "#lib/server/vesper.ts";
 import type { Memo, TagCount } from "#lib/types.ts";
 import { invalidateMemoOgCache } from "./cache";
-import { filterAgentMemos, findMemo, forgetMemos, loadMemos, queryTagCounts } from "./repository";
+import { countTags, filterAgentMemos, findMemo, forgetMemos, loadMemos } from "./repository";
 import type { AgentMemoFilters, AgentMemoResult, CreateMemoInput, UpdateMemoInput } from "./types";
 import { MemoError } from "./types";
 import { normalizeTags } from "./utils";
@@ -13,8 +12,8 @@ const createdSchema = z.object({ id: z.string() });
 
 export const getMemo = (env: AppEnv, id: string): Promise<Memo | null> => findMemo(env, id);
 
-export const listTagCounts = (env: AppEnv, publicOnly = false): Promise<TagCount[]> =>
-  queryTagCounts(env, publicOnly);
+export const listTagCounts = async (env: AppEnv): Promise<TagCount[]> =>
+  countTags(await loadMemos(env));
 
 export async function listAgentMemos(
   env: AppEnv,
@@ -28,8 +27,6 @@ export async function listAgentMemos(
   }));
 }
 
-export const searchAgentMemos = listAgentMemos;
-
 const bodyOf = (content: string) => {
   const lines = content.trimEnd().split("\n");
   while (lines.length > 0 && /^(#[^\s#]+\s*)+$/.test(lines[lines.length - 1].trim())) lines.pop();
@@ -37,10 +34,7 @@ const bodyOf = (content: string) => {
 };
 
 export async function createMemo(env: AppEnv, input: CreateMemoInput): Promise<Memo> {
-  const writtenTags = input.tags.length ? input.tags : normalizeTags(input.content);
-  const tags = writtenTags.length
-    ? writtenTags
-    : await classifyMemo(input.content, await listTagDefinitions(env));
+  const tags = input.tags.length ? input.tags : normalizeTags(input.content);
   const response = await vesperFetch(env, "/api/entries", {
     method: "POST",
     body: JSON.stringify({
